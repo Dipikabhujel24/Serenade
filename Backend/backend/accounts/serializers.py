@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
+from . import models
 
 
 class SignupSerializer(serializers.ModelSerializer):
@@ -26,3 +27,38 @@ class SignupSerializer(serializers.ModelSerializer):
             password=validated_data["password"],
         )
         return user
+
+
+class AlertSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = models.Alert
+        fields = ['id', 'user', 'alert_type', 'message', 'latitude', 'longitude', 'created_at']
+        read_only_fields = ['id', 'created_at']
+
+
+class LocationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = models.Location
+        fields = ['id', 'user', 'latitude', 'longitude', 'accuracy', 'timestamp']
+        read_only_fields = ['id', 'timestamp']
+
+
+class EmergencyContactSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = models.EmergencyContact
+        fields = ['id', 'user', 'name', 'phone', 'email', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class DeviceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = models.Device
+        fields = ['id', 'user', 'device_id', 'device_name', 'device_token', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class SMSQueueSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = models.SMSQueue
+        fields = ['id', 'phone', 'body', 'alert', 'status', 'next_attempt', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']

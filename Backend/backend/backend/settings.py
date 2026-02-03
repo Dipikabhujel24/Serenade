@@ -25,12 +25,13 @@ SECRET_KEY = 'django-insecure-jm163yi$7k3k0del%70z+wb8!vz&%_#=nk0(5r2xzt_4^2@6d^
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', '10.0.2.2']
 
 
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',  # Add daphne as first app for ASGI support
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -42,6 +43,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework.authtoken',
     'accounts',
+    'channels',  # Add channels
 ]
 
 MIDDLEWARE = [
@@ -131,3 +133,14 @@ USE_TZ = True
 STATIC_URL = 'static/'
 
 CORS_ALLOW_ALL_ORIGINS = True
+# Channels configuration
+ASGI_APPLICATION = 'backend.asgi.application'
+
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels.layers.InMemoryChannelLayer'
+    }
+}
+
+# WebSocket authentication
+from channels.auth import AuthMiddlewareStack
