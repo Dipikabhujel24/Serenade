@@ -1,0 +1,128 @@
+# Community Alert Views (add to accounts/views.py at the end)
+
+@csrf_exempt
+@api_view(["POST"])
+@permission_classes([])  # Allow both authenticated and unauthenticated
+def broadcast_community_alert(request):
+    """Broadcast a community alert to nearby users"""
+    from django.utils import timezone
+    from datetime import timedelta
+    
+    user = request.user if hasattr(request, "user") and not isinstance(request.user, AnonymousUser) else None
+
+    payload = request.data.copy() if isinstance(request.data, dict) else dict(request.data)
+    if user and getattr(user, "is_authenticated", False):
+        payload["user"] = user.id
+
+    serializer = CommunityAlertSerializer(data=payload)
+    if serializer.is_valid():
+        alert = serializer.save()
+        
+        # Set expiration to 1 hour from now if not provided
+        if not alert.expires_at:
+            alert.expires_at = timezone.now() + timedelta(hours=1)
+            alert.save()
+        
+        logger.info("Created community alert id=%s type=%s at (%.4f, %.4f) radius=%.2f km",
+                   alert.id, alert.alert_type, alert.latitude, alert.longitude, alert.radius_km)
+        
+        # Broadcast to WebSocket clients in range
+        try:
+            from asgiref.sync import async_to_sync
+            from channels.layers import get_channel_layer
+
+            channel_layer = get_channel_layer()
+            
+            # Send to global community_alerts group
+            async_to_sync(channel_layer.group_send)(
+                "community_alerts",
+                {
+                    "type": "community.alert",
+                    "data": {
+                        "id": alert.id,
+                        "type": alert.alert_type,
+                        "message": alert.message,
+                        "latitude": alert.latitude,
+                        "longitude": alert.longitude,
+                        "radius_km": alert.radius_km,
+                        "username": alert.user.username if alert.user else "Anonymous",
+                        "created_at": alert.created_at.isoformat(),
+                    },
+                },
+            )
+            logger.info("Broadcast community alert to WebSocket clients")
+        except Exception as e:
+            logger.exception("Failed to broadcast community alert: %s", e)
+
+        return Response(
+            {
+                "status": "success",
+                "message": "Community alert broadcast",
+                "alert_id": alert.id,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    logger.warning("Failed to create community alert: %s", serializer.errors)
+    return Response(
+        {"status": "error", "errors": serializer.errors},
+        status=status.HTTP_400_BAD_REQUEST,
+    )
+
+
+@api_view(["GET"])
+def nearby_community_alerts(request):
+    """Get community alerts near the user's location"""
+    from math import radians, sin, cos, sqrt, atan2
+    from django.utils import timezone
+
+    latitude = float(request.query_params.get("latitude", 0))
+    longitude = float(request.query_params.get("longitude", 0))
+    search_radius_km = float(request.query_params.get("radius", 5))  # Search radius in km
+
+    # Get all active alerts
+    alerts = account_models.CommunityAlert.objects.filter(
+        is_active=True,
+        expires_at__gt=timezone.now(),
+    ).order_by("-created_at")
+
+    # Filter by distance (simple haversine formula)
+    def distance_km(lat1, lon1, lat2, lon2):
+        R = 6371  # Earth's radius in km
+        lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
+        dlat = lat2 - lat1
+        dlon = lon2 - lon1
+        a = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
+        c = 2 * atan2(sqrt(a), sqrt(1 - a))
+        return R * c
+
+    nearby = []
+    for alert in alerts:
+        dist = distance_km(latitude, longitude, alert.latitude, alert.longitude)
+        # Include if within user search radius or alert broadcast radius
+        if dist <= max(search_radius_km, alert.radius_km):
+            nearby.append(alert)
+
+    serializer = CommunityAlertSerializer(nearby, many=True)
+    return Response({"status": "success", "data": serializer.data}, status=status.HTTP_200_OK)
+
+
+@api_view(["POST"])
+def report_community_alert(request, alert_id):
+    """Report a community alert as spam/false"""
+    try:
+        alert = account_models.CommunityAlert.objects.get(id=alert_id)
+        alert.reports_count = (alert.reports_count or 0) + 1
+        
+        # Deactivate if too many reports
+        if alert.reports_count >= 5:
+            alert.is_active = False
+            logger.warning("Community alert %s deactivated due to reports", alert_id)
+        
+        alert.save()
+        return Response({"status": "success", "message": "Alert reported"}, status=status.HTTP_200_OK)
+    except account_models.CommunityAlert.DoesNotExist:
+        return Response(
+            {"status": "error", "error": "Alert not found"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
