@@ -1,0 +1,37 @@
+{
+  "expo": {
+    "name": "serenade",
+    "slug": "serenade",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/Logo.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/images/Logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/Logo.png",
+        "backgroundColor": "#ffffff"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false,
+      "package": "com.anonymous.serenade"
+    },
+    "web": {
+      "favicon": "./assets/images/Logo.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "cfe40944-7115-445e-827e-53aad7cbdbd2"
+      }
+    },
+    "owner": "dipika05"
+  }
+}
