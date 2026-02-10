@@ -6,7 +6,9 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from .models import EmergencyContact
 from .serializers import SignupSerializer, EmergencyContactSerializer
 from rest_framework.decorators import api_view, permission_classes
+from rest_framework.parsers import JSONParser
 from rest_framework.permissions import IsAuthenticated
+from rest_framework_simplejwt.authentication import JWTAuthentication
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 import logging
@@ -15,7 +17,7 @@ logger = logging.getLogger(__name__)
 from .serializers import (
     AlertSerializer, LocationSerializer,
     EmergencyContactSerializer, DeviceSerializer, SMSQueueSerializer,
-    SafetyCompanionSerializer
+    SafetyCompanionSerializer, CommunityAlertSerializer
 )
 from django.contrib.auth.models import AnonymousUser
 from . import models as account_models
@@ -354,29 +356,28 @@ def alert_history(request):
     return Response({"status": "success", "data": serializer.data}, status=status.HTTP_200_OK)
 
 
-@csrf_exempt
-@api_view(["POST"])
-@permission_classes([])
-def broadcast_community_alert(request):
-    """Broadcast a community alert to nearby users"""
-    from django.utils import timezone
-    from datetime import timedelta
-    
-    user = request.user if hasattr(request, "user") and not isinstance(request.user, AnonymousUser) else None
-    payload = request.data.copy() if isinstance(request.data, dict) else dict(request.data)
-    if user and getattr(user, "is_authenticated", False):
-        payload["user"] = user.id
+from rest_framework import generics, status
 
-    from .serializers import CommunityAlertSerializer
-    serializer = CommunityAlertSerializer(data=payload)
-    if serializer.is_valid():
-        alert = serializer.save()
+class BroadcastCommunityAlertView(generics.CreateAPIView):
+    """Broadcast a community alert to nearby users"""
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    parser_classes = [JSONParser]
+    serializer_class = CommunityAlertSerializer
+
+    def perform_create(self, serializer):
+        from django.utils import timezone
+        from datetime import timedelta
+        
+        alert = serializer.save(user=self.request.user)
+        
         if not alert.expires_at:
             alert.expires_at = timezone.now() + timedelta(hours=1)
             alert.save()
         
-        logger.info("Community alert id=%s type=%s", alert.id, alert.alert_type)
+        logger.info("Community alert id=%s type=%s user=%s", alert.id, alert.alert_type, alert.user)
         
+        # Send WebSocket notification
         try:
             from asgiref.sync import async_to_sync
             from channels.layers import get_channel_layer
@@ -384,19 +385,25 @@ def broadcast_community_alert(request):
             async_to_sync(channel_layer.group_send)("community_alerts", {
                 "type": "community.alert",
                 "data": {
-                    "id": alert.id, "type": alert.alert_type, "message": alert.message,
-                    "latitude": alert.latitude, "longitude": alert.longitude,
+                    "id": alert.id, 
+                    "type": alert.alert_type, 
+                    "message": alert.message,
+                    "latitude": alert.latitude, 
+                    "longitude": alert.longitude,
                     "radius_km": alert.radius_km,
-                    "username": alert.user.username if alert.user else "Anonymous",
+                    "username": alert.user.username,
                     "created_at": alert.created_at.isoformat(),
                 },
             })
         except Exception as e:
-            logger.exception("Failed to broadcast: %s", e)
+            logger.exception("Failed to broadcast WebSocket: %s", e)
 
-        return Response({"status": "success", "alert_id": alert.id}, status=status.HTTP_201_CREATED)
-
-    return Response({"status": "error", "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+    def create(self, request, *args, **kwargs):
+        response = super().create(request, *args, **kwargs)
+        return Response(
+            {"status": "success", "alert_id": response.data.get("id")}, 
+            status=status.HTTP_201_CREATED
+        )
 
 
 @api_view(["GET"])

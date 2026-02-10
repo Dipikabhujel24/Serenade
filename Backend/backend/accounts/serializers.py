@@ -66,12 +66,16 @@ class SMSQueueSerializer(serializers.ModelSerializer):
 
 class CommunityAlertSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source='user.username', read_only=True)
-    
+
+    latitude = serializers.FloatField(required=True)
+    longitude = serializers.FloatField(required=True)
+    message = serializers.CharField(required=True)
+
     class Meta:
         model = models.CommunityAlert
-        fields = ['id', 'user', 'username', 'alert_type', 'message', 'latitude', 'longitude', 
-                  'radius_km', 'is_active', 'created_at', 'expires_at', 'views_count', 'reports_count']
-        read_only_fields = ['id', 'created_at', 'views_count', 'reports_count', 'user']
+        fields = ['id','user','username','alert_type','message','latitude','longitude',
+                  'radius_km','is_active','created_at','expires_at','views_count','reports_count']
+        read_only_fields = ['id','created_at','views_count','reports_count','user']
 
 
 class SafetyCompanionSerializer(serializers.ModelSerializer):
