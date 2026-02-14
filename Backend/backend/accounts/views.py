@@ -9,6 +9,8 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.parsers import JSONParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
+from django.core.mail import send_mail
+from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 import logging
@@ -33,9 +35,9 @@ class SignupView(APIView):
                 {"message": "User created successfully"},
                 status=status.HTTP_201_CREATED,
             )
-        # Log errors to help debugging when clients receive 400
         logger.warning("Signup validation failed: %s", serializer.errors)
         return Response({"errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
 
 @method_decorator(csrf_exempt, name='dispatch')
 class LoginView(APIView):
@@ -43,10 +45,8 @@ class LoginView(APIView):
         username = request.data.get("username")
         password = request.data.get("password")
 
-        # Log incoming login attempt (do not log passwords in production)
         logger.info("Login attempt for username='%s'", username)
 
-        # Log whether the username exists in the DB to help debugging
         from django.contrib.auth.models import User
 
         user_exists = User.objects.filter(username=username).exists()
@@ -56,25 +56,20 @@ class LoginView(APIView):
 
         if not user:
             logger.warning("Authentication failed for username='%s'", username)
-            return Response(
-                {"error": "Invalid credentials"},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
+            return Response({"error": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED)
 
         refresh = RefreshToken.for_user(user)
-        return Response(
-            {
-                "access": str(refresh.access_token),
-                "refresh": str(refresh),
-                "username": user.username,
-                "email": user.email,
-            }
-        )
+        return Response({
+            "access": str(refresh.access_token),
+            "refresh": str(refresh),
+            "username": user.username,
+            "email": user.email,
+        })
 
 
 @csrf_exempt
 @api_view(["POST"])
-@permission_classes([])  # Allow both authenticated and unauthenticated (SOS is critical)
+@permission_classes([])
 def sos_alert(request):
     """Handle SOS alert: save to DB, notify via WebSocket, SMS, and log"""
     user = request.user if hasattr(request, "user") and not isinstance(request.user, AnonymousUser) else None
@@ -87,17 +82,29 @@ def sos_alert(request):
     if serializer.is_valid():
         alert = serializer.save()
         logger.info("Saved alert id=%s type=%s user=%s", alert.id, alert.alert_type, alert.user)
-        
-        # 1. Send real-time WebSocket notification to all clients
+
+        # WebSocket notification
         try:
             from asgiref.sync import async_to_sync
             from channels.layers import get_channel_layer
 
             channel_layer = get_channel_layer()
-            # send to global alerts group
-            async_to_sync(channel_layer.group_send)(
-                "alerts",
-                {
+            async_to_sync(channel_layer.group_send)("alerts", {
+                "type": "alert.message",
+                "data": {
+                    "id": alert.id,
+                    "type": alert.alert_type,
+                    "message": alert.message,
+                    "latitude": alert.latitude,
+                    "longitude": alert.longitude,
+                    "user": alert.user.id if alert.user else None,
+                    "created_at": alert.created_at.isoformat(),
+                },
+            })
+
+            if alert.user:
+                user_group = f"user_{alert.user.id}"
+                async_to_sync(channel_layer.group_send)(user_group, {
                     "type": "alert.message",
                     "data": {
                         "id": alert.id,
@@ -105,85 +112,105 @@ def sos_alert(request):
                         "message": alert.message,
                         "latitude": alert.latitude,
                         "longitude": alert.longitude,
-                        "user": alert.user.id if alert.user else None,
+                        "user": alert.user.id,
                         "created_at": alert.created_at.isoformat(),
                     },
-                },
-            )
-
-            # also send to the specific user's group (if user)
-            if alert.user:
-                user_group = f"user_{alert.user.id}"
-                async_to_sync(channel_layer.group_send)(
-                    user_group,
-                    {
-                        "type": "alert.message",
-                        "data": {
-                            "id": alert.id,
-                            "type": alert.alert_type,
-                            "message": alert.message,
-                            "latitude": alert.latitude,
-                            "longitude": alert.longitude,
-                            "user": alert.user.id,
-                            "created_at": alert.created_at.isoformat(),
-                        },
-                    },
-                )
+                })
             logger.info("Sent WebSocket alert notification")
         except Exception as e:
             logger.exception("Failed to send WebSocket notification: %s", e)
 
-        # 2. Notify emergency contacts via SMS and/or API
         if alert.user:
             notify_emergency_contacts(alert)
 
-        return Response(
-            {"status": "success", "message": "SOS alert received", "alert_id": alert.id},
-            status=status.HTTP_201_CREATED,
-        )
+        return Response({"status": "success", "message": "SOS alert received", "alert_id": alert.id}, status=status.HTTP_201_CREATED)
 
     logger.warning("Failed to save alert: %s", serializer.errors)
-    return Response(
-        {"status": "error", "errors": serializer.errors},
-        status=status.HTTP_400_BAD_REQUEST,
-    )
+    return Response({"status": "error", "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
 
 
 def notify_emergency_contacts(alert):
-    """Notify emergency contacts via SMS and console logs"""
+    """Notify emergency contacts via SMS and email"""
     try:
         contacts = account_models.EmergencyContact.objects.filter(user=alert.user)
         if not contacts.exists():
             logger.info("No emergency contacts found for user %s", alert.user.id)
             return
 
-        # Prepare alert message
         sms_body = f"ALERT: {alert.alert_type.upper()} from {alert.user.username}"
         if alert.message:
             sms_body += f" - {alert.message}"
         if alert.latitude and alert.longitude:
             sms_body += f"\nLocation: https://maps.google.com/?q={alert.latitude},{alert.longitude}"
 
-        # Log alert to console (for development)
-        logger.warning(
-            "EMERGENCY ALERT - User: %s, Type: %s, Contacts: %d",
-            alert.user.username,
-            alert.alert_type,
-            contacts.count(),
-        )
+        logger.warning("EMERGENCY ALERT - User: %s, Type: %s, Contacts: %d", alert.user.username, alert.alert_type, contacts.count())
         for contact in contacts:
             logger.warning("  → Contact: %s (%s) %s", contact.name, contact.phone, contact.email or "")
 
-        # Try to send via Twilio SMS
         send_sms_alerts(alert, contacts, sms_body)
+
+        try:
+            latitude = alert.latitude
+            longitude = alert.longitude
+            maps_link = f"https://www.google.com/maps?q={latitude},{longitude}" if latitude and longitude else ""
+            subject = "🚨 EMERGENCY SOS ALERT - Serenade Safety App"
+            email_body = f"""
+              EMERGENCY ALERT!
+
+           {alert.user.username} has triggered an SOS alert.
+
+           Alert Type: {alert.alert_type}
+           Message: {alert.message}
+
+            Location:
+            {maps_link}
+
+            Time: {alert.created_at}
+
+            Please contact them immediately.
+
+            This message was sent automatically by Serenade Safety Application.
+            """
+
+            recipients = []
+            if alert.user.email:
+                recipients.append(alert.user.email)
+            for contact in contacts:
+                if contact.email:
+                    recipients.append(contact.email)
+
+            if recipients:
+                try:
+                    from .tasks import send_email_async
+
+                    text_body = email_body
+                    html_body = (
+                        f"<p><strong>EMERGENCY ALERT!</strong></p>"
+                        f"<p>{alert.user.username} has triggered an SOS alert.</p>"
+                        f"<p><strong>Alert Type:</strong> {alert.alert_type}</p>"
+                        f"<p><strong>Message:</strong> {alert.message}</p>"
+                        f"<p><strong>Location:</strong> <a href=\"{maps_link}\">Open in Google Maps</a></p>"
+                        f"<p><em>Please contact them immediately.</em></p>"
+                    )
+
+                    send_email_async(subject=subject, text_body=text_body, html_body=html_body, from_email=settings.DEFAULT_FROM_EMAIL, recipients=recipients)
+                    logger.warning("Enqueued background email to: %s", recipients)
+                except Exception as e:
+                    logger.exception("Failed to enqueue background email: %s", e)
+            else:
+                logger.warning("No email recipients found for SOS alert")
+        except Exception as e:
+            logger.exception("Failed to send email alerts: %s", e)
 
     except Exception as e:
         logger.exception("Failed to notify emergency contacts: %s", e)
 
 
 def send_sms_alerts(alert, contacts, sms_body):
-    """Send SMS alerts to emergency contacts via Twilio"""
+    """Send SMS alerts to emergency contacts via Twilio with rate limiting and normalization."""
     import os
+    import phonenumbers
+    from twilio.base.exceptions import TwilioRestException
 
     tw_sid = os.environ.get("TWILIO_ACCOUNT_SID")
     tw_token = os.environ.get("TWILIO_AUTH_TOKEN")
@@ -192,53 +219,137 @@ def send_sms_alerts(alert, contacts, sms_body):
     if not (tw_sid and tw_token and tw_from):
         logger.info("Twilio not configured. Queueing SMS for manual processing.")
         for contact in contacts:
-            account_models.SMSQueue.objects.create(
-                phone=contact.phone,
-                body=sms_body,
-                alert=alert,
-                status="pending",
-            )
+            phone_val = contact.phone
+            try:
+                pn = phonenumbers.parse(phone_val, "NP")
+                if phonenumbers.is_valid_number(pn):
+                    phone_val = phonenumbers.format_number(pn, phonenumbers.PhoneNumberFormat.E164)
+            except Exception:
+                logger.debug("Contact phone normalization failed for %s", phone_val)
+
+            account_models.SMSQueue.objects.create(phone=phone_val, body=sms_body, alert=alert, status="pending")
+        return
+
+    # Rate limiting setup
+    try:
+        from django.utils import timezone as dj_timezone
+        from .models import SMSRateLimit
+        from django.conf import settings as dj_settings
+    except Exception:
+        SMSRateLimit = None
+        dj_timezone = None
+        dj_settings = None
+
+    GLOBAL_DAILY_LIMIT = getattr(dj_settings, "SMS_GLOBAL_DAILY_LIMIT", 500)
+    USER_DAILY_LIMIT = getattr(dj_settings, "SMS_PER_USER_DAILY_LIMIT", 20)
+
+    def _get_rate_record(key):
+        if not SMSRateLimit or not dj_timezone:
+            return None
+        today = dj_timezone.now().date()
+        obj, _ = SMSRateLimit.objects.get_or_create(key=key, date=today)
+        return obj
+
+    user_key = f"user_{alert.user.id}" if getattr(alert, 'user', None) else "anonymous"
+    global_rec = _get_rate_record("global")
+    user_rec = _get_rate_record(user_key)
+
+    if global_rec and global_rec.count >= GLOBAL_DAILY_LIMIT:
+        for contact in contacts:
+            account_models.SMSQueue.objects.create(phone=contact.phone, body=sms_body, alert=alert, status="pending", last_error="global_rate_exceeded")
+        logger.warning("Global SMS daily limit reached; queued %d messages", len(contacts))
+        return
+
+    if user_rec and user_rec.count >= USER_DAILY_LIMIT:
+        for contact in contacts:
+            account_models.SMSQueue.objects.create(phone=contact.phone, body=sms_body, alert=alert, status="pending", last_error="user_rate_exceeded")
+        logger.warning("User %s SMS daily limit reached; queued %d messages", user_key, len(contacts))
         return
 
     try:
         from twilio.rest import Client
 
         client = Client(tw_sid, tw_token)
-        for contact in contacts:
+
+        for idx, contact in enumerate(contacts):
+            phone_val = contact.phone
             try:
-                client.messages.create(
-                    body=sms_body,
-                    from_=tw_from,
-                    to=contact.phone,
-                )
-                logger.info("Sent SMS to %s for alert %s", contact.phone, alert.id)
+                pn = phonenumbers.parse(phone_val, "NP")
+                if phonenumbers.is_valid_number(pn):
+                    phone_val = phonenumbers.format_number(pn, phonenumbers.PhoneNumberFormat.E164)
+                else:
+                    raise ValueError("Invalid phone number")
             except Exception as se:
-                logger.exception("Failed to send SMS to %s: %s", contact.phone, se)
-                # Enqueue for retry
-                account_models.SMSQueue.objects.create(
-                    phone=contact.phone,
-                    body=sms_body,
-                    alert=alert,
-                    status="failed",
-                )
+                logger.exception("Phone normalization failed for %s: %s", contact.phone, se)
+                account_models.SMSQueue.objects.create(phone=contact.phone, body=sms_body, alert=alert, status="failed", last_error="invalid_phone_format")
+                continue
+
+            # Re-check limits
+            global_rec = _get_rate_record("global")
+            user_rec = _get_rate_record(user_key)
+            if global_rec and global_rec.count >= GLOBAL_DAILY_LIMIT:
+                remaining = list(contacts)[idx:]
+                for rc in remaining:
+                    account_models.SMSQueue.objects.create(phone=rc.phone, body=sms_body, alert=alert, status="pending", last_error="global_rate_exceeded")
+                logger.warning("Global SMS daily limit reached mid-loop; queued %d messages", len(remaining))
+                return
+            if user_rec and user_rec.count >= USER_DAILY_LIMIT:
+                remaining = list(contacts)[idx:]
+                for rc in remaining:
+                    account_models.SMSQueue.objects.create(phone=rc.phone, body=sms_body, alert=alert, status="pending", last_error="user_rate_exceeded")
+                logger.warning("User SMS daily limit reached mid-loop; queued %d messages", len(remaining))
+                return
+
+            try:
+                # Reserve counters
+                if global_rec:
+                    global_rec.count += 1
+                    global_rec.save()
+                if user_rec:
+                    user_rec.count += 1
+                    user_rec.save()
+
+                client.messages.create(body=sms_body, from_=tw_from, to=phone_val)
+                logger.info("Sent SMS to %s for alert %s", phone_val, alert.id)
+            except TwilioRestException as tre:
+                logger.exception("Twilio error sending SMS to %s: %s", phone_val, tre)
+                err_code = getattr(tre, 'code', None)
+                if err_code == 63038 or ('63038' in str(tre)):
+                    if global_rec:
+                        global_rec.count = max(0, global_rec.count - 1)
+                        global_rec.save()
+                    if user_rec:
+                        user_rec.count = max(0, user_rec.count - 1)
+                        user_rec.save()
+                    remaining = list(contacts)[idx:]
+                    for rc in remaining:
+                        account_models.SMSQueue.objects.create(phone=rc.phone, body=sms_body, alert=alert, status="pending", last_error="daily_limit_exceeded")
+                    logger.warning("Twilio daily limit reached; queued remaining %d messages", len(remaining))
+                    return
+                account_models.SMSQueue.objects.create(phone=phone_val, body=sms_body, alert=alert, status="failed", last_error=str(tre))
+                if global_rec:
+                    global_rec.count = max(0, global_rec.count - 1)
+                    global_rec.save()
+                if user_rec:
+                    user_rec.count = max(0, user_rec.count - 1)
+                    user_rec.save()
+            except Exception as se:
+                logger.exception("Failed to send SMS to %s: %s", phone_val, se)
+                account_models.SMSQueue.objects.create(phone=phone_val, body=sms_body, alert=alert, status="failed", last_error=str(se))
+                if global_rec:
+                    global_rec.count = max(0, global_rec.count - 1)
+                    global_rec.save()
+                if user_rec:
+                    user_rec.count = max(0, user_rec.count - 1)
+                    user_rec.save()
     except ImportError:
         logger.warning("Twilio SDK not installed. Queueing SMS messages.")
         for contact in contacts:
-            account_models.SMSQueue.objects.create(
-                phone=contact.phone,
-                body=sms_body,
-                alert=alert,
-                status="pending",
-            )
+            account_models.SMSQueue.objects.create(phone=contact.phone, body=sms_body, alert=alert, status="pending")
     except Exception as e:
         logger.exception("Twilio client error: %s", e)
         for contact in contacts:
-            account_models.SMSQueue.objects.create(
-                phone=contact.phone,
-                body=sms_body,
-                alert=alert,
-                status="failed",
-            )
+            account_models.SMSQueue.objects.create(phone=contact.phone, body=sms_body, alert=alert, status="failed")
 
 
 class ContactListCreateView(APIView):
@@ -270,6 +381,7 @@ class ContactDetailView(APIView):
         except account_models.EmergencyContact.DoesNotExist:
             return Response({"status": "error", "error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
 
+
 class EmergencyContactListCreateView(generics.ListCreateAPIView):
     serializer_class = EmergencyContactSerializer
     permission_classes = [IsAuthenticated]
@@ -283,12 +395,14 @@ class EmergencyContactListCreateView(generics.ListCreateAPIView):
         serializer.save(user=self.request.user)
         logger.info("[EmergencyContact] Saved successfully")
 
+
 class EmergencyContactDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = (IsAuthenticated,)
     serializer_class = EmergencyContactSerializer
 
     def get_queryset(self):
         return EmergencyContact.objects.filter(user=self.request.user)
+
 
 class DeviceRegisterView(APIView):
     permission_classes = [IsAuthenticated]
@@ -304,17 +418,13 @@ class DeviceRegisterView(APIView):
         platform = data.get("platform", "")
         if not token:
             return Response({"status": "error", "error": "Missing token"}, status=status.HTTP_400_BAD_REQUEST)
-        # update-or-create
-        obj, created = account_models.Device.objects.update_or_create(
-            user=request.user, token=token, defaults={"platform": platform}
-        )
+        obj, created = account_models.Device.objects.update_or_create(user=request.user, token=token, defaults={"platform": platform})
         return Response({"status": "success", "data": DeviceSerializer(obj).data})
 
 
 @api_view(["POST"])
-@permission_classes([])  # Allow both authenticated and unauthenticated (location tracking is critical for safety)
+@permission_classes([])
 def location_update(request):
-    # Persist a location update
     user = request.user if hasattr(request, "user") and not isinstance(request.user, AnonymousUser) else None
 
     payload = request.data.copy() if isinstance(request.data, dict) else dict(request.data)
@@ -334,271 +444,131 @@ def location_update(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def recent_locations(request):
-    """Return recent location updates. Query params: minutes (int), limit (int)"""
     from django.utils import timezone
     from datetime import timedelta
 
     minutes = int(request.query_params.get("minutes", 5))
     limit = int(request.query_params.get("limit", 100))
-
     since = timezone.now() - timedelta(minutes=minutes)
     qs = account_models.Location.objects.filter(timestamp__gte=since).order_by("-timestamp")[:limit]
     serializer = LocationSerializer(qs, many=True)
-    return Response({"status": "success", "data": serializer.data}, status=status.HTTP_200_OK)
+    return Response({"status": "success", "data": serializer.data})
+
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def alert_history(request):
-    """Return user's alert history"""
-    limit = int(request.query_params.get("limit", 50))
-    qs = account_models.Alert.objects.filter(user=request.user).order_by("-created_at")[:limit]
+    """Return recent alerts for the authenticated user"""
+    user = request.user
+    qs = account_models.Alert.objects.filter(user=user).order_by("-created_at")[:100]
     serializer = AlertSerializer(qs, many=True)
-    return Response({"status": "success", "data": serializer.data}, status=status.HTTP_200_OK)
+    return Response({"status": "success", "data": serializer.data})
 
 
-from rest_framework import generics, status
-
-class BroadcastCommunityAlertView(generics.CreateAPIView):
-    """Broadcast a community alert to nearby users"""
-    authentication_classes = [JWTAuthentication]
+class BroadcastCommunityAlertView(APIView):
     permission_classes = [IsAuthenticated]
-    parser_classes = [JSONParser]
-    serializer_class = CommunityAlertSerializer
 
-    def perform_create(self, serializer):
-        from django.utils import timezone
-        from datetime import timedelta
-        
-        alert = serializer.save(user=self.request.user)
-        
-        if not alert.expires_at:
-            alert.expires_at = timezone.now() + timedelta(hours=1)
-            alert.save()
-        
-        logger.info("Community alert id=%s type=%s user=%s", alert.id, alert.alert_type, alert.user)
-        
-        # Send WebSocket notification
-        try:
-            from asgiref.sync import async_to_sync
-            from channels.layers import get_channel_layer
-            channel_layer = get_channel_layer()
-            async_to_sync(channel_layer.group_send)("community_alerts", {
-                "type": "community.alert",
-                "data": {
-                    "id": alert.id, 
-                    "type": alert.alert_type, 
-                    "message": alert.message,
-                    "latitude": alert.latitude, 
-                    "longitude": alert.longitude,
-                    "radius_km": alert.radius_km,
-                    "username": alert.user.username,
-                    "created_at": alert.created_at.isoformat(),
-                },
-            })
-        except Exception as e:
-            logger.exception("Failed to broadcast WebSocket: %s", e)
-
-    def create(self, request, *args, **kwargs):
-        response = super().create(request, *args, **kwargs)
-        return Response(
-            {"status": "success", "alert_id": response.data.get("id")}, 
-            status=status.HTTP_201_CREATED
-        )
+    def post(self, request):
+        data = request.data.copy() if isinstance(request.data, dict) else dict(request.data)
+        data["user"] = request.user.id
+        serializer = CommunityAlertSerializer(data=data)
+        if serializer.is_valid():
+            ca = serializer.save()
+            return Response({"status": "success", "data": CommunityAlertSerializer(ca).data}, status=status.HTTP_201_CREATED)
+        return Response({"status": "error", "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
 
 
 @api_view(["GET"])
+@permission_classes([IsAuthenticated])
 def nearby_community_alerts(request):
-    """Get community alerts near user's location"""
-    from math import radians, sin, cos, sqrt, atan2
-    from django.utils import timezone
+    try:
+        lat = float(request.query_params.get("latitude"))
+        lon = float(request.query_params.get("longitude"))
+    except Exception:
+        return Response({"status": "error", "error": "latitude and longitude required"}, status=status.HTTP_400_BAD_REQUEST)
 
-    lat = float(request.query_params.get("latitude", 0))
-    lon = float(request.query_params.get("longitude", 0))
-    radius = float(request.query_params.get("radius", 5))
-
-    alerts = account_models.CommunityAlert.objects.filter(is_active=True, expires_at__gt=timezone.now())
-
-    def distance_km(lat1, lon1, lat2, lon2):
-        R = 6371
-        lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
-        a = sin((lat2-lat1)/2)**2 + cos(lat1)*cos(lat2)*sin((lon2-lon1)/2)**2
-        return R * 2 * atan2(sqrt(a), sqrt(1-a))
-
-    nearby = [a for a in alerts if distance_km(lat, lon, a.latitude, a.longitude) <= max(radius, a.radius_km)]
-    from .serializers import CommunityAlertSerializer
-    serializer = CommunityAlertSerializer(nearby, many=True)
+    radius_km = float(request.query_params.get("radius_km", 5.0))
+    # simple bounding box approximation (~111 km per degree)
+    deg = radius_km / 111.0
+    qs = account_models.CommunityAlert.objects.filter(latitude__gte=lat - deg, latitude__lte=lat + deg, longitude__gte=lon - deg, longitude__lte=lon + deg, is_active=True)
+    serializer = CommunityAlertSerializer(qs, many=True)
     return Response({"status": "success", "data": serializer.data})
 
 
 @api_view(["POST"])
+@permission_classes([IsAuthenticated])
 def report_community_alert(request, alert_id):
-    """Report a community alert"""
     try:
-        alert = account_models.CommunityAlert.objects.get(id=alert_id)
-        alert.reports_count = (alert.reports_count or 0) + 1
-        if alert.reports_count >= 5:
-            alert.is_active = False
-        alert.save()
-        return Response({"status": "success"})
+        ca = account_models.CommunityAlert.objects.get(pk=alert_id)
     except account_models.CommunityAlert.DoesNotExist:
-        return Response({"status": "error"}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"status": "error", "error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+    ca.reports_count = (ca.reports_count or 0) + 1
+    ca.save()
+    return Response({"status": "success", "reports_count": ca.reports_count})
 
 
-# ====================== SAFETY COMPANION ======================
-
-@api_view(['GET', 'POST', 'PUT'])
+@api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def safety_companion_manage(request):
-    """
-    GET: Retrieve user's safety companion status
-    POST: Assign a new companion
-    PUT: Update companion settings (check_in interval, deviation threshold, etc.)
-    """
-    try:
-        companion_obj, created = account_models.SafetyCompanion.objects.get_or_create(user=request.user)
-        
-        if request.method == 'GET':
-            serializer = SafetyCompanionSerializer(companion_obj)
-            return Response(serializer.data)
-        
-        elif request.method == 'POST':
-            # Assign a new companion
-            companion_username = request.data.get('companion_username')
-            if not companion_username:
-                return Response({"error": "companion_username required"}, status=status.HTTP_400_BAD_REQUEST)
-            
-            try:
-                from django.contrib.auth.models import User
-                companion_user = User.objects.get(username=companion_username)
-                companion_obj.companion = companion_user
-                companion_obj.is_active = True
-                companion_obj.companion_acknowledged = False
-                companion_obj.save()
-                
-                serializer = SafetyCompanionSerializer(companion_obj)
-                return Response({"status": "success", "data": serializer.data})
-            except User.DoesNotExist:
-                return Response({"error": "Companion user not found"}, status=status.HTTP_404_NOT_FOUND)
-        
-        elif request.method == 'PUT':
-            # Update settings
-            if 'check_in_interval_minutes' in request.data:
-                companion_obj.check_in_interval_minutes = request.data['check_in_interval_minutes']
-            if 'deviation_threshold_km' in request.data:
-                companion_obj.deviation_threshold_km = request.data['deviation_threshold_km']
-            if 'notification_enabled' in request.data:
-                companion_obj.notification_enabled = request.data['notification_enabled']
-            if 'is_active' in request.data:
-                companion_obj.is_active = request.data['is_active']
-            
-            companion_obj.save()
-            serializer = SafetyCompanionSerializer(companion_obj)
-            return Response({"status": "success", "data": serializer.data})
-    
-    except Exception as e:
-        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    data = request.data.copy() if isinstance(request.data, dict) else dict(request.data)
+    data["user"] = request.user.id
+    serializer = SafetyCompanionSerializer(data=data)
+    if serializer.is_valid():
+        sc = serializer.save(user=request.user)
+        return Response({"status": "success", "data": SafetyCompanionSerializer(sc).data}, status=status.HTTP_201_CREATED)
+    return Response({"status": "error", "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
 
 
-@api_view(['POST'])
+@api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def safety_companion_unassign(request):
-    """Unassign current safety companion"""
     try:
-        companion_obj = account_models.SafetyCompanion.objects.get(user=request.user)
-        companion_obj.companion = None
-        companion_obj.is_active = False
-        companion_obj.save()
-        return Response({"status": "success", "message": "Companion unassigned"})
+        sc = account_models.SafetyCompanion.objects.get(user=request.user)
+        sc.companion = None
+        sc.is_active = False
+        sc.save()
+        return Response({"status": "success"})
     except account_models.SafetyCompanion.DoesNotExist:
-        return Response({"error": "No safety companion assigned"}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"status": "error", "error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
 
 
-@api_view(['POST'])
+@api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def safety_companion_checkin(request):
-    """User check-in with companion (resets overdue status)"""
     try:
-        companion_obj = account_models.SafetyCompanion.objects.get(user=request.user)
-        
-        # Update check-in time and location if provided
-        from django.utils import timezone
-        companion_obj.last_check_in = timezone.now()
-        
-        if 'latitude' in request.data and 'longitude' in request.data:
-            companion_obj.last_location_latitude = request.data['latitude']
-            companion_obj.last_location_longitude = request.data['longitude']
-            companion_obj.last_location_update = timezone.now()
-            companion_obj.deviation_alert_sent = False  # Reset deviation alert
-        
-        companion_obj.inactivity_alert_sent = False  # Reset inactivity alert
-        companion_obj.save()
-        
-        return Response({"status": "success", "message": "Check-in received"})
+        sc = account_models.SafetyCompanion.objects.get(user=request.user)
+        sc.last_check_in = account_models.timezone.now() if hasattr(account_models, 'timezone') else None
+        sc.save()
+        return Response({"status": "success"})
     except account_models.SafetyCompanion.DoesNotExist:
-        return Response({"error": "No safety companion assigned"}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"status": "error", "error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
 
 
-@api_view(['POST'])
+@api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def safety_companion_location_update(request):
-    """Update user location for deviation checking"""
     try:
-        companion_obj = account_models.SafetyCompanion.objects.get(user=request.user)
-        
-        if not companion_obj.is_active or not companion_obj.companion:
-            return Response({"status": "success", "message": "Safety companion not active"})
-        
-        latitude = request.data.get('latitude')
-        longitude = request.data.get('longitude')
-        
-        if not latitude or not longitude:
-            return Response({"error": "latitude and longitude required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Check for deviation
-        from django.utils import timezone
-        if companion_obj.has_deviated(latitude, longitude):
-            companion_obj.deviation_alert_sent = True
-            companion_obj.save()
-            
-            # Notify companion via WebSocket
-            from channels.layers import get_channel_layer
-            import asyncio
-            
-            channel_layer = get_channel_layer()
-            asyncio.create_task(channel_layer.group_send(
-                f"safety_companion_{companion_obj.companion.id}",
-                {
-                    "type": "companion_deviation",
-                    "message": f"{request.user.username} has deviated from expected route",
-                    "latitude": latitude,
-                    "longitude": longitude,
-                    "user_id": request.user.id,
-                }
-            ))
-            
-            return Response({"status": "success", "message": "Deviation detected, companion notified"})
-        
-        # Update location
-        companion_obj.last_location_latitude = latitude
-        companion_obj.last_location_longitude = longitude
-        companion_obj.last_location_update = timezone.now()
-        companion_obj.save()
-        
-        return Response({"status": "success", "message": "Location updated"})
+        sc = account_models.SafetyCompanion.objects.get(user=request.user)
+        lat = request.data.get("latitude")
+        lon = request.data.get("longitude")
+        if lat is not None and lon is not None:
+            sc.last_location_latitude = float(lat)
+            sc.last_location_longitude = float(lon)
+            sc.last_location_update = account_models.timezone.now() if hasattr(account_models, 'timezone') else None
+            sc.save()
+            return Response({"status": "success"})
+        return Response({"status": "error", "error": "latitude and longitude required"}, status=status.HTTP_400_BAD_REQUEST)
     except account_models.SafetyCompanion.DoesNotExist:
-        return Response({"error": "No safety companion assigned"}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"status": "error", "error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
 
 
-@api_view(['POST'])
+@api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def safety_companion_acknowledge(request):
-    """Companion acknowledges they've received the alert"""
     try:
-        # Get the SafetyCompanion record where current user is the companion
-        companion_obj = account_models.SafetyCompanion.objects.get(companion=request.user)
-        companion_obj.companion_acknowledged = True
-        companion_obj.save()
-        
-        return Response({"status": "success", "message": "Alert acknowledged"})
+        sc = account_models.SafetyCompanion.objects.get(user=request.user)
+        sc.companion_acknowledged = True
+        sc.save()
+        return Response({"status": "success"})
     except account_models.SafetyCompanion.DoesNotExist:
-        return Response({"error": "You are not assigned as a companion"}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"status": "error", "error": "Not found"}, status=status.HTTP_404_NOT_FOUND)

@@ -6,13 +6,38 @@ import {
   TouchableOpacity,
   ScrollView,
   Alert,
+  Platform,
 } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
+import { SafeAreaView } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getLiveLocation } from "../services/locationService";
 import { sendLocation, sosAlert } from "../services/api";
+import { sendSmsToContacts, getStoredEmergencyContacts } from "../services/smsService";
+
+const shadowStyle = Platform.select({
+  ios: {
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+  },
+  android: { elevation: 8 },
+  default: {},
+});
+
+const cardShadow = Platform.select({
+  ios: {
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+  },
+  android: { elevation: 4 },
+  default: {},
+});
 
 export default function Dashboard({ navigation }: any) {
-  /* ================= USER ================= */
   const [username, setUsername] = useState<string>("");
   const [status, setStatus] = useState<string>("");
 
@@ -28,7 +53,6 @@ export default function Dashboard({ navigation }: any) {
     loadUser();
   }, []);
 
-  /* ================= SOS ================= */
   const handleSOS = () => {
     Alert.alert(
       "Emergency SOS",
@@ -37,10 +61,9 @@ export default function Dashboard({ navigation }: any) {
         { text: "Cancel", style: "cancel" },
         {
           text: "YES",
-          onPress: async () => {
+                onPress: async () => {
             try {
               setStatus("Preparing SOS...");
-              // Try to get current location but don't block if it fails
               let lat: number | null = null;
               let lon: number | null = null;
               try {
@@ -59,10 +82,51 @@ export default function Dashboard({ navigation }: any) {
                 payload.longitude = lon;
               }
 
-              const resp = await sosAlert(payload);
-              console.log("sos response", resp);
-              setStatus("SOS sent");
-              Alert.alert("SOS Activated", "Emergency alert has been sent successfully");
+              // Check offline SMS mode preference
+              const offlineModeVal = await AsyncStorage.getItem("offline_sms_mode");
+              const offlineMode = offlineModeVal === "true";
+
+              let smsSent = false;
+              const contacts = await getStoredEmergencyContacts();
+              const locationText = lat !== null && lon !== null ? `https://maps.google.com/?q=${lat},${lon}` : "Location unavailable";
+              const smsMessage = `Emergency SOS activated. ${locationText}`;
+
+              try {
+                const resp = await sosAlert(payload);
+                console.log("sos response", resp);
+                setStatus("SOS sent");
+                Alert.alert("SOS Activated", "Emergency alert has been sent successfully");
+                // If offline mode enabled still send SMS in parallel
+                if (offlineMode && contacts.length > 0) {
+                  try {
+                    await sendSmsToContacts(contacts, smsMessage);
+                    smsSent = true;
+                  } catch (e) {
+                    console.warn("Failed to send SMS after server SOS", e);
+                  }
+                }
+              } catch (err: any) {
+                console.error("Failed to send SOS", err);
+                setStatus("SOS failed");
+                Alert.alert("SOS Failed", err?.message || String(err));
+
+                // If server failed, attempt offline SMS
+                if (contacts.length > 0) {
+                  try {
+                    await sendSmsToContacts(contacts, smsMessage);
+                    smsSent = true;
+                    setStatus("SOS sent via SMS");
+                    Alert.alert("SOS Sent (SMS)", "Emergency SMS has been queued/opened for your contacts.");
+                  } catch (smsErr) {
+                    console.error("Failed to send SMS fallback", smsErr);
+                    Alert.alert("SOS Failed", smsErr?.message || String(smsErr));
+                  }
+                }
+              }
+
+              if (!offlineMode && !smsSent) {
+                // Non-offline mode and SMS not sent — nothing else to do
+              }
             } catch (err: any) {
               console.error("Failed to send SOS", err);
               setStatus("SOS failed");
@@ -74,13 +138,10 @@ export default function Dashboard({ navigation }: any) {
     );
   };
 
-  /* ================= Live Location ================= */
   const handleLiveLocation = async () => {
     try {
-      console.log("LiveLocation: start");
       setStatus("Requesting location permission...");
       const location = await getLiveLocation();
-      console.log("LiveLocation: got", location);
       setStatus("Sending location to server...");
 
       try {
@@ -105,127 +166,190 @@ export default function Dashboard({ navigation }: any) {
     }
   };
 
+  const showSafetyTips = () => {
+    Alert.alert(
+      "Safety Tips",
+      "• Share your live location with trusted contacts\n• Use Fake Call to leave uncomfortable situations\n• Keep emergency contacts updated\n• Trust your instincts – leave if something feels wrong\n• Stay aware of your surroundings"
+    );
+  };
+
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    if (hour < 12) return "Good Morning";
+    if (hour < 17) return "Good Afternoon";
+    return "Good Evening";
+  };
+
+  const QuickActionButton = ({
+    colors,
+    icon,
+    title,
+    subtitle,
+    onPress,
+  }: {
+    colors: [string, string];
+    icon: string;
+    title: string;
+    subtitle: string;
+    onPress: () => void;
+  }) => (
+    <TouchableOpacity
+      style={[styles.quickActionCard, cardShadow]}
+      onPress={onPress}
+      activeOpacity={0.85}
+    >
+      <LinearGradient
+        colors={colors}
+        style={styles.quickActionIcon}
+      >
+        <Text style={styles.quickActionIconText}>{icon}</Text>
+      </LinearGradient>
+      <Text style={styles.quickActionTitle}>{title}</Text>
+      <Text style={styles.quickActionSub}>{subtitle}</Text>
+    </TouchableOpacity>
+  );
+
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      {/* ================= Header ================= */}
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.greeting}>Good Morning</Text>
-          <Text style={styles.username}>{username}</Text>
-        </View>
+    <LinearGradient
+      colors={["#F8F5FF", "#FDF2F8", "#F5F0FF"]}
+      style={styles.gradientBg}
+    >
+      <SafeAreaView style={styles.safeArea} edges={["top"]}>
+        <ScrollView
+          contentContainerStyle={styles.container}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* ================= Header ================= */}
+          <View style={styles.header}>
+            <View style={styles.headerLeft}>
+              <View style={styles.logoContainer}>
+                <LinearGradient
+                  colors={["#8B5CF6", "#A78BFA"]}
+                  style={styles.logoCircle}
+                >
+                  <Text style={styles.logoIcon}>🛡️</Text>
+                </LinearGradient>
+              </View>
+              <View>
+                <Text style={styles.appName}>Serenade</Text>
+                <Text style={styles.greeting}>
+                  Hello, {username || "there"}
+                </Text>
+              </View>
+            </View>
 
-        <View style={styles.headerIcons}>
-          <TouchableOpacity
-            onPress={() => navigation.navigate("Notification")}
+            <View style={styles.headerIcons}>
+              <TouchableOpacity
+                style={styles.iconBtn}
+                onPress={() => navigation.navigate("Notification")}
+              >
+                <Text style={styles.icon}>🔔</Text>
+                <View style={styles.notificationBadge} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.iconBtn}
+                onPress={() => navigation.navigate("Menu")}
+              >
+                <Text style={styles.icon}>☰</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {status ? (
+            <View style={[styles.statusRow, cardShadow]}>
+              <Text style={styles.statusText}>{status}</Text>
+            </View>
+          ) : null}
+
+          {/* ================= You Are Safe Card ================= */}
+          <LinearGradient
+            colors={["#34D399", "#10B981"]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={[styles.safeCard, shadowStyle]}
           >
-            <Text style={styles.icon}>🔔</Text>
+            <View style={styles.safeCardContent}>
+              <View style={styles.safeCardLeft}>
+                <View style={styles.safeDot} />
+                <View>
+                  <Text style={styles.safeTitle}>You are Safe</Text>
+                  <Text style={styles.safeSub}>All systems operational. Stay safe!</Text>
+                </View>
+              </View>
+              <View style={styles.shieldOutline}>
+                <Text style={styles.shieldIcon}>🛡️</Text>
+              </View>
+            </View>
+          </LinearGradient>
+
+          {/* ================= SOS Button ================= */}
+          <TouchableOpacity
+            style={styles.sosWrapper}
+            onPress={handleSOS}
+            activeOpacity={0.9}
+          >
+            <LinearGradient
+              colors={["#EC4899", "#EF4444"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={[styles.sosButton, shadowStyle]}
+            >
+              <View style={styles.sosIconCircle}>
+                <Text style={styles.sosExclamation}>!</Text>
+              </View>
+              <Text style={styles.sosTitle}>SOS</Text>
+              <Text style={styles.sosSub}>Press & Hold</Text>
+            </LinearGradient>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            onPress={() => navigation.navigate("Settings")}
-          >
-            <Text style={styles.icon}>⚙️</Text>
-          </TouchableOpacity>
+          {/* ================= Quick Actions ================= */}
+          <Text style={styles.sectionTitle}>Quick Actions</Text>
 
-          <TouchableOpacity
-            onPress={() => navigation.navigate("Menu")}
-          >
-            <Text style={styles.icon}>☰</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {status ? (
-        <View style={styles.statusRow}>
-          <Text style={styles.statusText}>{status}</Text>
-        </View>
-      ) : null}
-
-      {/* ================= Battery Status ================= */}
-      <View style={styles.batteryCard}>
-        <View>
-          <Text style={styles.cardTitle}>🔋 Battery Status</Text>
-          <Text style={styles.cardSub}>Auto Alert at 15%</Text>
-        </View>
-        <Text style={styles.batteryPercent}>80%</Text>
-      </View>
-
-      {/* ================= SOS ================= */}
-      <TouchableOpacity style={styles.sosCard} onPress={handleSOS}>
-        <View style={styles.sosIcon}>
-          <Text style={{ fontSize: 24 }}>🛡️</Text>
-        </View>
-        <Text style={styles.sosTitle}>Emergency SOS</Text>
-        <Text style={styles.sosSub}>
-          Tap to activate Emergency Alert
-        </Text>
-      </TouchableOpacity>
-
-      {/* ================= Quick Actions ================= */}
-      <Text style={styles.sectionTitle}>Quick Actions</Text>
-
-      <View style={styles.actionsRow}>
-        <TouchableOpacity
-          style={[styles.actionCard, { backgroundColor: "#B56AE0" }]}
-          onPress={handleLiveLocation}
-        >
-          <Text style={styles.actionIcon}>📍</Text>
-          <Text style={styles.actionTitle}>Live Location</Text>
-          <Text style={styles.actionSub}>Share Location</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.actionCard, { backgroundColor: "#9BB7FF" }]}
-          onPress={() =>
-            Alert.alert("Voice Alert", "Listening for 'Help Me'")
-          }
-        >
-          <Text style={styles.actionIcon}>🎤</Text>
-          <Text style={styles.actionTitle}>Voice Alert</Text>
-          <Text style={styles.actionSub}>Say “Help Me”</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.actionsRow}>
-        <TouchableOpacity
-          style={[styles.actionCard, { backgroundColor: "#FF6AA2" }]}
-          onPress={() =>
-            Alert.alert(
-              "Community Alert",
-              "Nearby users notified"
-            )
-          }
-        >
-          <Text style={styles.actionIcon}>👥</Text>
-          <Text style={styles.actionTitle}>Community</Text>
-          <Text style={styles.actionSub}>Nearby Alert</Text>
-        </TouchableOpacity>
-
-
-        <TouchableOpacity
-          style={[styles.actionCard, { backgroundColor: "#FF8A5C" }]}
-          onPress={() =>
-            Alert.alert(
-              "Nearby Help",
-              "Showing police & hospitals"
-            )
-          }
-        >
-          <Text style={styles.actionIcon}>🏥</Text>
-          <Text style={styles.actionTitle}>Nearby Help</Text>
-          <Text style={styles.actionSub}>Police & Hospitals</Text>
-        </TouchableOpacity>
-      </View>
-    </ScrollView>
+          <View style={styles.actionsGrid}>
+            <QuickActionButton
+              colors={["#6366F1", "#8B5CF6"]}
+              icon="📍"
+              title="Share Location"
+              subtitle="Live location"
+              onPress={handleLiveLocation}
+            />
+            <QuickActionButton
+              colors={["#EC4899", "#F43F5E"]}
+              icon="👥"
+              title="Find Companion"
+              subtitle="Safety buddy"
+              onPress={() => navigation.navigate("SafetyCompanion")}
+            />
+            <QuickActionButton
+              colors={["#14B8A6", "#0D9488"]}
+              icon="📞"
+              title="Fake Call"
+              subtitle="Exit situations"
+              onPress={() => navigation.navigate("FakeCall")}
+            />
+            <QuickActionButton
+              colors={["#F97316", "#EA580C"]}
+              icon="💡"
+              title="Safety Tips"
+              subtitle="Stay prepared"
+              onPress={showSafetyTips}
+            />
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    </LinearGradient>
   );
 }
 
-/* ================= Styles ================= */
-
 const styles = StyleSheet.create({
+  gradientBg: {
+    flex: 1,
+  },
+  safeArea: {
+    flex: 1,
+  },
   container: {
-    backgroundColor: "#F99AFB",
-    padding: 16,
+    padding: 20,
     paddingBottom: 40,
   },
 
@@ -233,100 +357,188 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 20,
+    marginBottom: 24,
+  },
+  headerLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  logoContainer: {},
+  logoCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  logoIcon: {
+    fontSize: 22,
+  },
+  appName: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: "#1F2937",
+    letterSpacing: -0.5,
   },
   greeting: {
-    fontSize: 18,
-  },
-  username: {
-    fontSize: 22,
-    fontWeight: "700",
+    fontSize: 14,
+    color: "#6B7280",
+    marginTop: 2,
   },
   headerIcons: {
     flexDirection: "row",
-    gap: 12,
+    alignItems: "center",
+    gap: 16,
+  },
+  iconBtn: {
+    padding: 8,
+    position: "relative",
   },
   icon: {
-    fontSize: 20,
+    fontSize: 22,
   },
-
-  batteryCard: {
-    backgroundColor: "#B56AE0",
-    borderRadius: 16,
-    padding: 16,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 20,
-  },
-  cardTitle: {
-    fontWeight: "700",
-  },
-  cardSub: {
-    fontSize: 12,
-  },
-  batteryPercent: {
-    fontWeight: "700",
-    fontSize: 18,
+  notificationBadge: {
+    position: "absolute",
+    top: 6,
+    right: 6,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#EF4444",
   },
 
   statusRow: {
     backgroundColor: "#FFF",
-    padding: 10,
-    borderRadius: 10,
-    marginBottom: 12,
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 16,
   },
   statusText: {
-    color: "#333",
+    color: "#374151",
+    fontSize: 14,
   },
 
-  sosCard: {
-    backgroundColor: "#FF4FD8",
+  safeCard: {
     borderRadius: 20,
-    padding: 24,
-    alignItems: "center",
+    padding: 20,
     marginBottom: 24,
   },
-  sosIcon: {
+  safeCardContent: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  safeCardLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  safeDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
     backgroundColor: "#FFF",
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+  },
+  safeTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#FFF",
+  },
+  safeSub: {
+    fontSize: 13,
+    color: "rgba(255,255,255,0.9)",
+    marginTop: 2,
+  },
+  shieldOutline: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: "rgba(255,255,255,0.6)",
     justifyContent: "center",
     alignItems: "center",
-    marginBottom: 12,
+  },
+  shieldIcon: {
+    fontSize: 20,
+  },
+
+  sosWrapper: {
+    alignSelf: "center",
+    marginBottom: 32,
+  },
+  sosButton: {
+    width: 160,
+    height: 160,
+    borderRadius: 80,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  sosIconCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "rgba(255,255,255,0.3)",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  sosExclamation: {
+    fontSize: 28,
+    fontWeight: "800",
+    color: "#FFF",
   },
   sosTitle: {
-    fontSize: 20,
-    fontWeight: "700",
+    fontSize: 24,
+    fontWeight: "800",
+    color: "#FFF",
+    letterSpacing: 2,
   },
   sosSub: {
     fontSize: 12,
+    color: "rgba(255,255,255,0.9)",
+    marginTop: 4,
   },
 
   sectionTitle: {
     fontSize: 18,
     fontWeight: "700",
-    marginBottom: 12,
+    color: "#1F2937",
+    marginBottom: 16,
   },
 
-  actionsRow: {
+  actionsGrid: {
     flexDirection: "row",
+    flexWrap: "wrap",
     justifyContent: "space-between",
+    gap: 12,
+  },
+  quickActionCard: {
+    width: "47%",
+    backgroundColor: "#FFF",
+    borderRadius: 20,
+    padding: 18,
+    minHeight: 130,
+  },
+  quickActionIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    justifyContent: "center",
+    alignItems: "center",
     marginBottom: 12,
   },
-  actionCard: {
-    width: "48%",
-    borderRadius: 18,
-    padding: 16,
+  quickActionIconText: {
+    fontSize: 24,
   },
-  actionIcon: {
-    fontSize: 20,
-    marginBottom: 6,
-  },
-  actionTitle: {
+  quickActionTitle: {
+    fontSize: 15,
     fontWeight: "700",
+    color: "#1F2937",
   },
-  actionSub: {
+  quickActionSub: {
     fontSize: 12,
+    color: "#6B7280",
+    marginTop: 2,
   },
 });

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -50,6 +50,22 @@ export default function Settings({ navigation }: any) {
   const [batteryAlertEnabled, setBatteryAlertEnabled] =
     useState(true);
   const batteryThreshold = 15;
+  const [offlineSmsMode, setOfflineSmsMode] = useState(false);
+
+  useEffect(() => {
+    const loadPref = async () => {
+      try {
+        // lazy-load AsyncStorage to avoid adding top-level import if unused
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const AsyncStorage = require("@react-native-async-storage/async-storage");
+        const v = await AsyncStorage.getItem("offline_sms_mode");
+        setOfflineSmsMode(v === "true");
+      } catch (e) {
+        console.warn("Failed to load offline_sms_mode", e);
+      }
+    };
+    loadPref();
+  }, []);
 
   /* ================= App Settings Handler ================= */
   const handleAppSetting = (item: string) => {
@@ -129,22 +145,36 @@ export default function Settings({ navigation }: any) {
       <View style={styles.cardWhite}>
         <Text style={styles.cardTitle}>⚙️ App Settings</Text>
 
-        {[
-          "Notification",
-          "Privacy & Security",
-          "Language",
-          "About",
-          "Help",
-        ].map((item) => (
-          <TouchableOpacity
-            key={item}
-            style={styles.settingRow}
-            onPress={() => handleAppSetting(item)}
-          >
-            <Text>{item}</Text>
-            <Text>›</Text>
-          </TouchableOpacity>
-        ))}
+        {["Notification", "Privacy & Security", "Language", "About", "Help"].map(
+          (item) => (
+            <TouchableOpacity
+              key={item}
+              style={styles.settingRow}
+              onPress={() => handleAppSetting(item)}
+            >
+              <Text>{item}</Text>
+              <Text>›</Text>
+            </TouchableOpacity>
+          )
+        )}
+
+        <View style={[styles.settingRow, { alignItems: "center" }]}>
+          <Text>Offline SMS Mode</Text>
+          <Switch
+            value={offlineSmsMode}
+            onValueChange={async (val) => {
+              setOfflineSmsMode(val);
+              try {
+                // eslint-disable-next-line @typescript-eslint/no-var-requires
+                const AsyncStorage = require("@react-native-async-storage/async-storage");
+                await AsyncStorage.setItem("offline_sms_mode", val ? "true" : "false");
+                Alert.alert("Saved", `Offline SMS Mode ${val ? "enabled" : "disabled"}`);
+              } catch (e) {
+                console.warn("Failed to save offline_sms_mode", e);
+              }
+            }}
+          />
+        </View>
       </View>
 
       {/* ================= Add Contact Modal ================= */}

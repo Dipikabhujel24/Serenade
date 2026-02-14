@@ -4,3 +4,5 @@ djangorestframework-simplejwt
 channels
 channels_redis
 daphne
+phonenumbers
+twilio

@@ -80,6 +80,9 @@ class SMSQueue(models.Model):
     body = models.TextField()
     alert = models.ForeignKey(Alert, on_delete=models.CASCADE, null=True, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    attempt_count = models.IntegerField(default=0)
+    max_attempts = models.IntegerField(default=5)
+    last_error = models.TextField(null=True, blank=True)
     next_attempt = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -89,6 +92,22 @@ class SMSQueue(models.Model):
 
     def __str__(self):
         return f"SMS to {self.phone} - {self.status}"
+
+
+class SMSRateLimit(models.Model):
+    """Simple per-day rate limit counter for SMS sends.
+
+    `key` can be 'global' or 'user_<id>' to track global and per-user counts.
+    """
+    key = models.CharField(max_length=100, db_index=True)
+    date = models.DateField()
+    count = models.IntegerField(default=0)
+
+    class Meta:
+        unique_together = (('key', 'date'),)
+
+    def __str__(self):
+        return f"RateLimit {self.key} @ {self.date}: {self.count}"
 
 class CommunityAlert(models.Model):
     ALERT_TYPE_CHOICES = [

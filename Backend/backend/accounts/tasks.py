@@ -1,4 +1,55 @@
 import logging
+from concurrent.futures import ThreadPoolExecutor
+import time
+
+logger = logging.getLogger(__name__)
+
+# small thread pool for background tasks
+_executor = ThreadPoolExecutor(max_workers=2)
+
+
+def _send_email_worker(subject: str, text_body: str, html_body: str, from_email: str, recipients: list, max_retries: int = 3):
+    try_count = 0
+    delay = 2
+    while try_count < max_retries:
+        try:
+            from django.core.mail import EmailMultiAlternatives
+            from django.conf import settings as dj_settings
+
+            # Ensure from_email has a valid fallback
+            sender = from_email or getattr(dj_settings, 'DEFAULT_FROM_EMAIL', None) or getattr(dj_settings, 'EMAIL_HOST_USER', None)
+            if not sender:
+                logger.error("No valid from_email available; aborting email send")
+                return False
+
+            # Clean recipients list
+            clean_recipients = [r for r in (recipients or []) if r and isinstance(r, str) and r.strip()]
+            if not clean_recipients:
+                logger.error("No valid recipients provided; aborting email send")
+                return False
+
+            msg = EmailMultiAlternatives(subject=subject, body=text_body, from_email=sender, to=clean_recipients)
+            if html_body:
+                msg.attach_alternative(html_body, "text/html")
+            msg.send(fail_silently=False)
+            logger.info("Background email sent to %s", recipients)
+            return True
+        except Exception as e:
+            try_count += 1
+            logger.exception("Background email send failed (attempt %s/%s): %s", try_count, max_retries, e)
+            time.sleep(delay)
+            delay *= 2
+    logger.error("Failed to send background email after %s attempts", max_retries)
+    return False
+
+
+def send_email_async(subject: str, text_body: str, html_body: str, from_email: str, recipients: list):
+    """Submit email send to background thread pool and return immediately."""
+    try:
+        _executor.submit(_send_email_worker, subject, text_body, html_body, from_email, recipients)
+    except Exception:
+        logger.exception("Failed to submit background email task")
+import logging
 from typing import Dict
 from django.conf import settings
 from django.utils import timezone
