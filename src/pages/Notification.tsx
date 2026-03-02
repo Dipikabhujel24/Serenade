@@ -5,6 +5,8 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
+  Linking,
+  Alert,
 } from "react-native";
 import { connectRealtime, disconnectRealtime, onRealtime } from "../services/realtime";
 
@@ -14,8 +16,21 @@ export default function Notifications({ navigation }: any) {
   useEffect(() => {
     connectRealtime();
     const unsub = onRealtime((data) => {
-      // prepend
-      setItems((s) => [{ title: data.type || "Alert", desc: data.message || JSON.stringify(data) }, ...s].slice(0,50));
+      try {
+        const t = (data.type || data.alert_type || 'Alert').toString();
+        const msg = data.message || data.text || JSON.stringify(data);
+
+        // Show an immediate small alert for SOS (optional)
+        if (t === 'sos' || t === 'sos_alert' || t === 'alert') {
+          Alert.alert('SOS Received', msg, [{ text: 'OK' }], { cancelable: true });
+        }
+
+        // Prepend with readable title/desc
+        const title = t === 'community' || t === 'community_alert' ? 'Community Alert' : t === 'safety_companion' || t === 'companion' ? 'Companion Alert' : (t || 'Alert');
+        setItems((s) => [{ title, desc: msg, raw: data }, ...s].slice(0, 50));
+      } catch (e) {
+        console.warn('Realtime handler error', e);
+      }
     });
 
     return () => {
@@ -42,10 +57,22 @@ export default function Notifications({ navigation }: any) {
       )}
 
       {items.map((it, index) => (
-        <View key={index} style={styles.card}>
+        <TouchableOpacity key={index} style={styles.card} onPress={() => {
+          // Try to open location if present in raw payload
+          const raw = (it as any).raw;
+          const lat = raw?.latitude || raw?.lat;
+          const lon = raw?.longitude || raw?.lon;
+          if (lat != null && lon != null) {
+            const url = `https://maps.google.com/?q=${lat},${lon}`;
+            Linking.openURL(url).catch(() => {});
+            return;
+          }
+          // Navigate to AlertHistory or show details
+          Alert.alert(it.title, it.desc);
+        }}>
           <Text style={styles.title}>{it.title}</Text>
           <Text style={styles.desc}>{it.desc}</Text>
-        </View>
+        </TouchableOpacity>
       ))}
     </ScrollView>
   );

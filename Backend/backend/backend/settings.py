@@ -26,7 +26,7 @@ SECRET_KEY = 'django-insecure-jm163yi$7k3k0del%70z+wb8!vz&%_#=nk0(5r2xzt_4^2@6d^
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', '10.0.2.2']
+ALLOWED_HOSTS = ['*'] if DEBUG else ['localhost', '127.0.0.1', '10.0.2.2']
 
 
 # Application definition
@@ -133,6 +133,10 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
+# Media files (user uploaded)
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
 CORS_ALLOW_ALL_ORIGINS = True
 # Channels configuration
 ASGI_APPLICATION = 'backend.asgi.application'
@@ -146,12 +150,13 @@ CHANNEL_LAYERS = {
 # WebSocket authentication
 from channels.auth import AuthMiddlewareStack
 
-# EMAIL CONFIGURATION (GMAIL SMTP)
-# Read credentials from environment variables for security.
-EMAIL_BACKEND = os.environ.get('DJANGO_EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
+# EMAIL CONFIGURATION
+# For development: use console backend (prints emails to terminal)
+# For production: set DJANGO_EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend in environment
+EMAIL_BACKEND = os.environ.get('DJANGO_EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
 EMAIL_HOST = os.environ.get('EMAIL_HOST', 'smtp.gmail.com')
 EMAIL_PORT = int(os.environ.get('EMAIL_PORT', 587))
 EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'True').lower() in ('1', 'true', 'yes')
 EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
-DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL') or EMAIL_HOST_USER or 'no-reply@localhost'
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL') or EMAIL_HOST_USER or 'noreply@serenade.app'

@@ -12,6 +12,10 @@ import Notifications from "../pages/Notification";
 import SafetyCompanion from "../pages/SafetyCompanion";
 import LiveTracking from "../pages/LiveTracking";
 import ContactsPage from "../pages/ContactsPage";
+import AboutPage from "../pages/AboutPage";
+import HelpPage from "../pages/HelpPage";
+import PrivacySecurityPage from "../pages/PrivacySecurityPage";
+import LanguagePage from "../pages/LanguagePage";
 
 export type AuthStackParamList = {
   Splash: undefined;
@@ -26,6 +30,12 @@ export type AuthStackParamList = {
   SafetyCompanion: undefined;
   LiveTracking: undefined;
   Contacts: undefined;
+  AlertHistory: undefined;
+  NearbyHelp: undefined;
+  About: undefined;
+  Help: undefined;
+  PrivacySecurity: undefined;
+  Language: undefined;
 };
 
 const Stack = createNativeStackNavigator<AuthStackParamList>();
@@ -37,6 +47,8 @@ export default function AuthNavigator() {
       <Stack.Screen name="Signup" component={SignupPage} />
       <Stack.Screen name="Login" component={LoginPage} />
       <Stack.Screen name="Dashboard" component={Dashboard} />
+      <Stack.Screen name="AlertHistory" component={require('../pages/AlertHistory').default} />
+      <Stack.Screen name="NearbyHelp" component={require('../pages/NearbyHelp').default} />
       <Stack.Screen name="FakeCall" component={FakeCall} />
       <Stack.Screen name="Settings" component={Settings}/>
       <Stack.Screen name="Menu" component={Menu} />
@@ -45,9 +57,10 @@ export default function AuthNavigator() {
       <Stack.Screen name="SafetyCompanion" component={SafetyCompanion} />
       <Stack.Screen name="LiveTracking" component={LiveTracking} />
       <Stack.Screen name="Contacts" component={ContactsPage} />
-
-  
-
+      <Stack.Screen name="About" component={AboutPage} />
+      <Stack.Screen name="Help" component={HelpPage} />
+      <Stack.Screen name="PrivacySecurity" component={PrivacySecurityPage} />
+      <Stack.Screen name="Language" component={LanguagePage} />
     </Stack.Navigator>
   );
 }

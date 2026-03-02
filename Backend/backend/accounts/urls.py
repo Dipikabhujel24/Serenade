@@ -1,4 +1,5 @@
 from django.urls import path
+from rest_framework_simplejwt.views import TokenRefreshView
 from .views import (
     SignupView,
     LoginView,
@@ -11,17 +12,21 @@ from .views import (
     alert_history,
     BroadcastCommunityAlertView,
     nearby_community_alerts,
+    nearby_places_proxy,
     report_community_alert,
+    upload_avatar,
     safety_companion_manage,
     safety_companion_unassign,
     safety_companion_checkin,
     safety_companion_location_update,
     safety_companion_acknowledge,
+    user_profile,
 )
 
 urlpatterns = [
     path('signup/', SignupView.as_view()),
     path('login/', LoginView.as_view()),
+    path('token/refresh/', TokenRefreshView.as_view()),
     path('sos/', sos_alert),
     path('contacts/', EmergencyContactListCreateView.as_view()),
     path('contacts/<int:pk>/', EmergencyContactDetailView.as_view()),
@@ -29,9 +34,12 @@ urlpatterns = [
     path('location/', location_update),
     path('locations/', recent_locations),
     path('alert-history/', alert_history),
+    path('places/nearby/', nearby_places_proxy),
+    path('profile/avatar/', upload_avatar),
     path('community-alert/broadcast/', BroadcastCommunityAlertView.as_view()),
     path('community-alert/nearby/', nearby_community_alerts),
     path('community-alert/<int:alert_id>/report/', report_community_alert),
+    path('profile/', user_profile),
     path('safety-companion/', safety_companion_manage),
     path('safety-companion/unassign/', safety_companion_unassign),
     path('safety-companion/checkin/', safety_companion_checkin),

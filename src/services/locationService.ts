@@ -1,7 +1,7 @@
 import * as Location from "expo-location";
 import { Platform } from "react-native";
 
-function getBrowserLocation(): Promise<{ latitude: number; longitude: number }> {
+function getBrowserLocation(): Promise<{ latitude: number; longitude: number; accuracy: number; timestamp: number }> {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
       return reject(new Error("Geolocation is not supported by this browser."));
@@ -12,6 +12,8 @@ function getBrowserLocation(): Promise<{ latitude: number; longitude: number }> 
         resolve({
           latitude: pos.coords.latitude,
           longitude: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+          timestamp: pos.timestamp || Date.now(),
         });
       },
       (err) => {
@@ -50,6 +52,8 @@ export async function getLiveLocation() {
     return {
       latitude: location.coords.latitude,
       longitude: location.coords.longitude,
+      accuracy: location.coords.accuracy ?? null,
+      timestamp: (location.timestamp as number) || Date.now(),
     };
   } catch (err: any) {
     // Provide clearer guidance for common cases

@@ -4,10 +4,12 @@ from rest_framework import status, generics
 from django.contrib.auth import authenticate
 from rest_framework_simplejwt.tokens import RefreshToken
 from .models import EmergencyContact
-from .serializers import SignupSerializer, EmergencyContactSerializer
+from .serializers import SignupSerializer, EmergencyContactSerializer, UserProfileSerializer
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.parsers import JSONParser
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
+import os
+import requests
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from django.core.mail import send_mail
 from django.conf import settings
@@ -59,12 +61,33 @@ class LoginView(APIView):
             return Response({"error": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED)
 
         refresh = RefreshToken.for_user(user)
+        profile = account_models.UserProfile.objects.filter(user=user).first()
         return Response({
             "access": str(refresh.access_token),
             "refresh": str(refresh),
             "username": user.username,
             "email": user.email,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "phone": profile.phone if profile else "",
         })
+
+
+@api_view(["GET", "PUT", "PATCH"])
+@permission_classes([IsAuthenticated])
+def user_profile(request):
+    user = request.user
+    account_models.UserProfile.objects.get_or_create(user=user)
+
+    if request.method == "GET":
+        serializer = UserProfileSerializer(user)
+        return Response({"status": "success", "data": serializer.data})
+
+    serializer = UserProfileSerializer(user, data=request.data, partial=True)
+    if serializer.is_valid():
+        serializer.save()
+        return Response({"status": "success", "data": serializer.data})
+    return Response({"status": "error", "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
 
 
 @csrf_exempt
@@ -414,11 +437,29 @@ class DeviceRegisterView(APIView):
 
     def post(self, request):
         data = request.data.copy() if isinstance(request.data, dict) else dict(request.data)
-        token = data.get("token")
-        platform = data.get("platform", "")
-        if not token:
-            return Response({"status": "error", "error": "Missing token"}, status=status.HTTP_400_BAD_REQUEST)
-        obj, created = account_models.Device.objects.update_or_create(user=request.user, token=token, defaults={"platform": platform})
+        token = data.get("device_token") or data.get("token")
+        device_id = data.get("device_id")
+        device_name = data.get("device_name") or data.get("platform", "")
+
+        if not token and not device_id:
+            return Response(
+                {"status": "error", "error": "Missing device_token or device_id"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        lookup = {"user": request.user}
+        if token:
+            lookup["device_token"] = token
+        else:
+            lookup["device_id"] = device_id
+
+        defaults = {"device_name": device_name}
+        if token:
+            defaults["device_token"] = token
+        if device_id:
+            defaults["device_id"] = device_id
+
+        obj, created = account_models.Device.objects.update_or_create(defaults=defaults, **lookup)
         return Response({"status": "success", "data": DeviceSerializer(obj).data})
 
 
@@ -469,11 +510,9 @@ class BroadcastCommunityAlertView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        data = request.data.copy() if isinstance(request.data, dict) else dict(request.data)
-        data["user"] = request.user.id
-        serializer = CommunityAlertSerializer(data=data)
+        serializer = CommunityAlertSerializer(data=request.data)
         if serializer.is_valid():
-            ca = serializer.save()
+            ca = serializer.save(user=request.user)
             return Response({"status": "success", "data": CommunityAlertSerializer(ca).data}, status=status.HTTP_201_CREATED)
         return Response({"status": "error", "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -495,6 +534,62 @@ def nearby_community_alerts(request):
     return Response({"status": "success", "data": serializer.data})
 
 
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def nearby_places_proxy(request):
+    """Proxy to Google Places Nearby Search to avoid exposing API key on client
+    Query params: lat, lon, type (hospital|police), radius (meters)
+    """
+    try:
+        lat = float(request.query_params.get("lat"))
+        lon = float(request.query_params.get("lon"))
+    except Exception:
+        return Response({"status": "error", "error": "lat and lon required"}, status=status.HTTP_400_BAD_REQUEST)
+
+    place_type = request.query_params.get("type", "hospital")
+    try:
+        radius = int(request.query_params.get("radius", 5000))
+    except Exception:
+        radius = 5000
+
+    api_key = os.environ.get("GOOGLE_PLACES_API_KEY")
+    if not api_key:
+        return Response({"status": "error", "error": "Google Places API key not configured on server"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    url = (
+        f"https://maps.googleapis.com/maps/api/place/nearbysearch/json?location={lat},{lon}"
+        f"&radius={radius}&type={place_type}&key={api_key}"
+    )
+
+    try:
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        return Response({"status": "success", "data": data})
+    except Exception as e:
+        logger.exception("Failed to fetch places: %s", e)
+        return Response({"status": "error", "error": str(e)}, status=status.HTTP_502_BAD_GATEWAY)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def upload_avatar(request):
+    user = request.user
+    if not user or not getattr(user, 'is_authenticated', False):
+        return Response({"status": "error", "error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+
+    file = request.FILES.get('avatar')
+    if not file:
+        return Response({"status": "error", "error": "No file uploaded"}, status=status.HTTP_400_BAD_REQUEST)
+
+    profile, _ = account_models.UserProfile.objects.get_or_create(user=user)
+    try:
+        profile.avatar.save(file.name, file, save=True)
+        return Response({"status": "success", "avatar": profile.avatar.url})
+    except Exception as e:
+        logger.exception("Failed to save avatar: %s", e)
+        return Response({"status": "error", "error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def report_community_alert(request, alert_id):
@@ -507,9 +602,18 @@ def report_community_alert(request, alert_id):
     return Response({"status": "success", "reports_count": ca.reports_count})
 
 
-@api_view(["POST"])
+@api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
 def safety_companion_manage(request):
+    # GET: Retrieve current safety companion status
+    if request.method == "GET":
+        try:
+            sc = account_models.SafetyCompanion.objects.get(user=request.user)
+            return Response({"status": "success", "data": SafetyCompanionSerializer(sc).data})
+        except account_models.SafetyCompanion.DoesNotExist:
+            return Response({"status": "success", "data": None})
+    
+    # POST: Create or update safety companion
     data = request.data.copy() if isinstance(request.data, dict) else dict(request.data)
     data["user"] = request.user.id
     serializer = SafetyCompanionSerializer(data=data)

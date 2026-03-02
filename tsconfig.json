@@ -4,7 +4,7 @@
     "module": "esnext",
     "jsx": "react-native",
     "strict": false,
-    "moduleResolution": "bundler",
+    "moduleResolution": "node",
     "customConditions": [
       "react-native"
     ],
@@ -13,8 +13,17 @@
     "skipLibCheck": true,
     "resolveJsonModule": true
   },
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    "src/**/*",
+    "app/**/*",
+    "components/**/*"
+  ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "Backend",
+    "serenade"
   ],
   "extends": "expo/tsconfig.base"
 }

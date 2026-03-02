@@ -7,13 +7,18 @@ import {
   ScrollView,
   Alert,
   Platform,
+  Image,
+  Linking,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { SafeAreaView } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getLiveLocation } from "../services/locationService";
-import { sendLocation, sosAlert } from "../services/api";
+import { sendLocation, sosAlert, initApiHostFromStorage } from "../services/api";
+import { getAlertHistory } from "../services/api";
+import { startVoiceMonitor, stopVoiceMonitor } from "../services/voiceAlert";
 import { sendSmsToContacts, getStoredEmergencyContacts } from "../services/smsService";
+import useShakeDetector from "../hooks/useShakeDetector";
 
 const shadowStyle = Platform.select({
   ios: {
@@ -40,6 +45,12 @@ const cardShadow = Platform.select({
 export default function Dashboard({ navigation }: any) {
   const [username, setUsername] = useState<string>("");
   const [status, setStatus] = useState<string>("");
+  const [voiceListening, setVoiceListening] = useState<boolean>(false);
+  const [voiceStatus, setVoiceStatus] = useState<string>("");
+  const [alerts, setAlerts] = useState<any[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
 
   useEffect(() => {
     const loadUser = async () => {
@@ -50,8 +61,42 @@ export default function Dashboard({ navigation }: any) {
         console.log("Failed to load username");
       }
     };
+    const loadPreferences = async () => {
+      try {
+        await initApiHostFromStorage();
+        const v = await AsyncStorage.getItem("voice_monitor_enabled");
+        if (v === "true") {
+          const started = startVoiceMonitor((s: string) => {
+            setVoiceStatus(s);
+            setStatus(s.startsWith("triggered") ? "Voice SOS triggered" : s);
+          });
+          setVoiceListening(Boolean(started));
+        }
+      } catch (e) {
+        console.warn("Failed to load preferences", e);
+      }
+    };
     loadUser();
+    loadPreferences();
+    return () => {
+      try {
+        stopVoiceMonitor();
+      } catch {}
+    };
   }, []);
+
+  // Shake detection: hidden SOS trigger
+  useShakeDetector(async () => {
+    try {
+      // check if user enabled shake SOS
+      const v = await AsyncStorage.getItem("shake_sos_enabled");
+      if (v !== "true") return;
+      // trigger immediate SOS without confirmation
+      sendSosImmediate();
+    } catch (e) {
+      console.warn("Shake handler error", e);
+    }
+  });
 
   const handleSOS = () => {
     Alert.alert(
@@ -61,82 +106,86 @@ export default function Dashboard({ navigation }: any) {
         { text: "Cancel", style: "cancel" },
         {
           text: "YES",
-                onPress: async () => {
-            try {
-              setStatus("Preparing SOS...");
-              let lat: number | null = null;
-              let lon: number | null = null;
-              try {
-                const loc = await getLiveLocation();
-                lat = (loc as any).latitude ?? null;
-                lon = (loc as any).longitude ?? null;
-                setStatus("Location captured");
-              } catch (e: any) {
-                console.warn("Could not capture location for SOS", e);
-                setStatus("Sending SOS without location");
-              }
-
-              const payload: any = { alert_type: "sos", message: "Emergency SOS activated" };
-              if (lat !== null && lon !== null) {
-                payload.latitude = lat;
-                payload.longitude = lon;
-              }
-
-              // Check offline SMS mode preference
-              const offlineModeVal = await AsyncStorage.getItem("offline_sms_mode");
-              const offlineMode = offlineModeVal === "true";
-
-              let smsSent = false;
-              const contacts = await getStoredEmergencyContacts();
-              const locationText = lat !== null && lon !== null ? `https://maps.google.com/?q=${lat},${lon}` : "Location unavailable";
-              const smsMessage = `Emergency SOS activated. ${locationText}`;
-
-              try {
-                const resp = await sosAlert(payload);
-                console.log("sos response", resp);
-                setStatus("SOS sent");
-                Alert.alert("SOS Activated", "Emergency alert has been sent successfully");
-                // If offline mode enabled still send SMS in parallel
-                if (offlineMode && contacts.length > 0) {
-                  try {
-                    await sendSmsToContacts(contacts, smsMessage);
-                    smsSent = true;
-                  } catch (e) {
-                    console.warn("Failed to send SMS after server SOS", e);
-                  }
-                }
-              } catch (err: any) {
-                console.error("Failed to send SOS", err);
-                setStatus("SOS failed");
-                Alert.alert("SOS Failed", err?.message || String(err));
-
-                // If server failed, attempt offline SMS
-                if (contacts.length > 0) {
-                  try {
-                    await sendSmsToContacts(contacts, smsMessage);
-                    smsSent = true;
-                    setStatus("SOS sent via SMS");
-                    Alert.alert("SOS Sent (SMS)", "Emergency SMS has been queued/opened for your contacts.");
-                  } catch (smsErr) {
-                    console.error("Failed to send SMS fallback", smsErr);
-                    Alert.alert("SOS Failed", smsErr?.message || String(smsErr));
-                  }
-                }
-              }
-
-              if (!offlineMode && !smsSent) {
-                // Non-offline mode and SMS not sent — nothing else to do
-              }
-            } catch (err: any) {
-              console.error("Failed to send SOS", err);
-              setStatus("SOS failed");
-              Alert.alert("SOS Failed", err?.message || String(err));
-            }
-          },
+                onPress: sendSosImmediate,
         },
       ]
     );
   };
+
+  // sendSosImmediate: extracted logic used for both the confirmation flow and hidden shake trigger
+  async function sendSosImmediate() {
+    try {
+      setStatus("Preparing SOS...");
+      let lat: number | null = null;
+      let lon: number | null = null;
+      try {
+        const loc = await getLiveLocation();
+        lat = (loc as any).latitude ?? null;
+        lon = (loc as any).longitude ?? null;
+        setStatus("Location captured");
+      } catch (e: any) {
+        console.warn("Could not capture location for SOS", e);
+        setStatus("Sending SOS without location");
+      }
+
+      const payload: any = { alert_type: "sos", message: "Emergency SOS activated" };
+      if (lat !== null && lon !== null) {
+        payload.latitude = lat;
+        payload.longitude = lon;
+        try {
+          const locAny: any = await getLiveLocation();
+          if (locAny.accuracy != null) payload.accuracy = locAny.accuracy;
+          if (locAny.timestamp) payload.timestamp = locAny.timestamp;
+        } catch (e) {}
+      }
+
+      const offlineModeVal = await AsyncStorage.getItem("offline_sms_mode");
+      const offlineMode = offlineModeVal === "true";
+
+      let smsSent = false;
+      const contacts = await getStoredEmergencyContacts();
+      const locationText = lat !== null && lon !== null ? `https://maps.google.com/?q=${lat},${lon}` : "Location unavailable";
+      const smsMessage = `Emergency SOS activated. ${locationText}`;
+
+      try {
+        const resp = await sosAlert(payload);
+        console.log("sos response", resp);
+        setStatus("SOS sent");
+        Alert.alert("SOS Activated", "Emergency alert has been sent successfully");
+        if (offlineMode && contacts.length > 0) {
+          try {
+            await sendSmsToContacts(contacts, smsMessage);
+            smsSent = true;
+          } catch (e) {
+            console.warn("Failed to send SMS after server SOS", e);
+          }
+        }
+      } catch (err: any) {
+        console.error("Failed to send SOS", err);
+        setStatus("SOS failed");
+        Alert.alert("SOS Failed", err?.message || String(err));
+        if (contacts.length > 0) {
+          try {
+            await sendSmsToContacts(contacts, smsMessage);
+            smsSent = true;
+            setStatus("SOS sent via SMS");
+            Alert.alert("SOS Sent (SMS)", "Emergency SMS has been queued/opened for your contacts.");
+          } catch (smsErr) {
+            console.error("Failed to send SMS fallback", smsErr);
+            Alert.alert("SOS Failed", smsErr?.message || String(smsErr));
+          }
+        }
+      }
+
+      if (!offlineMode && !smsSent) {
+        // nothing else
+      }
+    } catch (err: any) {
+      console.error("Failed to send SOS", err);
+      setStatus("SOS failed");
+      Alert.alert("SOS Failed", err?.message || String(err));
+    }
+  }
 
   const handleLiveLocation = async () => {
     try {
@@ -227,7 +276,11 @@ export default function Dashboard({ navigation }: any) {
                   colors={["#8B5CF6", "#A78BFA"]}
                   style={styles.logoCircle}
                 >
-                  <Text style={styles.logoIcon}>🛡️</Text>
+                  <Image 
+                    source={require('../../assets/images/Logo.png')} 
+                    style={styles.logoIcon}
+                    resizeMode="contain"
+                  />
                 </LinearGradient>
               </View>
               <View>
@@ -238,21 +291,48 @@ export default function Dashboard({ navigation }: any) {
               </View>
             </View>
 
-            <View style={styles.headerIcons}>
-              <TouchableOpacity
-                style={styles.iconBtn}
-                onPress={() => navigation.navigate("Notification")}
-              >
-                <Text style={styles.icon}>🔔</Text>
-                <View style={styles.notificationBadge} />
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.iconBtn}
-                onPress={() => navigation.navigate("Menu")}
-              >
-                <Text style={styles.icon}>☰</Text>
-              </TouchableOpacity>
-            </View>
+              <View style={styles.headerIcons}>
+                <TouchableOpacity
+                  style={styles.iconBtn}
+                  onPress={() => navigation.navigate("Notification")}
+                >
+                  <Text style={styles.icon}>🔔</Text>
+                  <View style={styles.notificationBadge} />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.iconBtn}
+                  onPress={() => navigation.navigate("Menu")}
+                >
+                  <Text style={styles.icon}>☰</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.headerIconsRight}>
+                <TouchableOpacity
+                  style={styles.iconBtn}
+                  onPress={async () => {
+                    if (voiceListening) {
+                      stopVoiceMonitor();
+                      setVoiceListening(false);
+                      setVoiceStatus("");
+                      try {
+                        await AsyncStorage.setItem("voice_monitor_enabled", "false");
+                      } catch {}
+                    } else {
+                      const started = startVoiceMonitor((s: string) => {
+                        setVoiceStatus(s);
+                        setStatus(s.startsWith("triggered") ? "Voice SOS triggered" : s);
+                      });
+                      setVoiceListening(Boolean(started));
+                      try {
+                        await AsyncStorage.setItem("voice_monitor_enabled", started ? "true" : "false");
+                      } catch {}
+                      if (!started) setVoiceStatus("unsupported");
+                    }
+                  }}
+                >
+                  <Text style={styles.icon}>{voiceListening ? "🎙️" : "🎤"}</Text>
+                </TouchableOpacity>
+              </View>
           </View>
 
           {status ? (
@@ -277,7 +357,11 @@ export default function Dashboard({ navigation }: any) {
                 </View>
               </View>
               <View style={styles.shieldOutline}>
-                <Text style={styles.shieldIcon}>🛡️</Text>
+                <Image 
+                  source={require('../../assets/images/Logo.png')} 
+                  style={styles.shieldIcon}
+                  resizeMode="contain"
+                />
               </View>
             </View>
           </LinearGradient>
@@ -328,6 +412,20 @@ export default function Dashboard({ navigation }: any) {
               onPress={() => navigation.navigate("FakeCall")}
             />
             <QuickActionButton
+              colors={["#06B6D4", "#0891B2"]}
+              icon="🆘"
+              title="Nearby Help"
+              subtitle="Police & Hospitals"
+              onPress={() => navigation.navigate('NearbyHelp')}
+            />
+            <QuickActionButton
+              colors={["#06B6D4", "#0891B2"]}
+              icon="📜"
+              title="Past Incidents"
+              subtitle="View recent alerts"
+              onPress={() => navigation.navigate('AlertHistory')}
+            />
+            <QuickActionButton
               colors={["#F97316", "#EA580C"]}
               icon="💡"
               title="Safety Tips"
@@ -335,6 +433,43 @@ export default function Dashboard({ navigation }: any) {
               onPress={showSafetyTips}
             />
           </View>
+          {showHistory ? (
+            <View style={{ marginTop: 18 }}>
+              <Text style={styles.sectionTitle}>Alert History</Text>
+              {historyLoading ? (
+                <Text style={{ color: '#6B7280' }}>Loading recent alerts...</Text>
+              ) : historyError ? (
+                <Text style={{ color: 'red' }}>Failed to load: {historyError}</Text>
+              ) : alerts.length === 0 ? (
+                <Text style={{ color: '#6B7280' }}>No recent alerts found.</Text>
+              ) : (
+                alerts.map((a: any) => {
+                  const time = new Date(a.created_at || a.timestamp || a.createdAt || a.date);
+                  const label = a.message || a.alert_type || 'Alert';
+                  const lat = a.latitude;
+                  const lon = a.longitude;
+                  return (
+                    <TouchableOpacity
+                      key={String(a.id) + (a.created_at || a.timestamp || '')}
+                      style={[styles.quickActionCard, { marginBottom: 10 }]}
+                      onPress={() => {
+                        if (lat != null && lon != null) {
+                          const url = `https://maps.google.com/?q=${lat},${lon}`;
+                          Linking.openURL(url).catch(() => {});
+                        }
+                      }}
+                    >
+                      <Text style={{ fontWeight: '700', color: '#1F2937' }}>{label}</Text>
+                      <Text style={{ color: '#6B7280', marginTop: 6 }}>{time.toLocaleString()}</Text>
+                      {lat != null && lon != null ? (
+                        <Text style={{ color: '#6B7280', marginTop: 6 }}>Location: {lat.toFixed(5)}, {lon.toFixed(5)}</Text>
+                      ) : null}
+                    </TouchableOpacity>
+                  );
+                })
+              )}
+            </View>
+          ) : null}
         </ScrollView>
       </SafeAreaView>
     </LinearGradient>
@@ -373,7 +508,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   logoIcon: {
-    fontSize: 22,
+    width: 28,
+    height: 28,
   },
   appName: {
     fontSize: 20,
@@ -390,6 +526,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 16,
+  },
+  headerIconsRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
   },
   iconBtn: {
     padding: 8,
@@ -460,7 +601,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   shieldIcon: {
-    fontSize: 20,
+    width: 28,
+    height: 28,
   },
 
   sosWrapper: {

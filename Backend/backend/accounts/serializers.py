@@ -2,7 +2,7 @@ import re
 from rest_framework import serializers
 from django.contrib.auth.models import User
 from . import models
-from .models import Alert, Location, EmergencyContact, Device, SMSQueue, SafetyCompanion
+from .models import Alert, Location, EmergencyContact, Device, SMSQueue, SafetyCompanion, UserProfile
 import phonenumbers
 from rest_framework import serializers
 
@@ -10,10 +10,13 @@ from rest_framework import serializers
 class SignupSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
     username = serializers.CharField(max_length=150)
+    first_name = serializers.CharField(required=False, allow_blank=True)
+    last_name = serializers.CharField(required=False, allow_blank=True)
+    phone = serializers.CharField(required=False, allow_blank=True)
 
     class Meta:
         model = User
-        fields = ["username", "email", "password"]
+        fields = ["username", "email", "password", "first_name", "last_name", "phone"]
 
     def validate_username(self, value):
         # Django User model only allows letters, numbers, and @/./+/-/_
@@ -36,15 +39,105 @@ class SignupSerializer(serializers.ModelSerializer):
         if User.objects.filter(email=value).exists():
             raise serializers.ValidationError("Email already exists")
 
-        return value
+        return value.lower()
+
+    def validate_phone(self, value):
+        """Validate phone number during signup"""
+        if not value or value.strip() == "":
+            return ""  # Phone is optional during signup
+        
+        raw = value.strip()
+        try:
+            # Use NP (Nepal) as default region
+            pn = phonenumbers.parse(raw, "NP")
+            if not phonenumbers.is_valid_number(pn):
+                raise serializers.ValidationError("Invalid phone number")
+            # Return normalized E.164 format
+            return phonenumbers.format_number(pn, phonenumbers.PhoneNumberFormat.E164)
+        except phonenumbers.NumberParseException:
+            raise serializers.ValidationError("Invalid phone number format. Use format like +977-9841234567 or 9841234567")
 
     def create(self, validated_data):
+        phone = validated_data.pop("phone", "")
         user = User.objects.create_user(
             username=validated_data["username"],
             email=validated_data["email"],
             password=validated_data["password"],
         )
+        if validated_data.get("first_name"):
+            user.first_name = validated_data["first_name"]
+        if validated_data.get("last_name"):
+            user.last_name = validated_data["last_name"]
+        user.save()
+        UserProfile.objects.get_or_create(user=user, defaults={"phone": phone})
         return user
+
+
+class UserProfileSerializer(serializers.ModelSerializer):
+    phone = serializers.CharField(required=False, allow_blank=True)
+    avatar = serializers.CharField(read_only=True)
+
+    class Meta:
+        model = User
+        fields = ["username", "email", "first_name", "last_name", "phone", "avatar"]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        profile = getattr(instance, "profile", None)
+        data["phone"] = profile.phone if profile else ""
+        data["avatar"] = profile.avatar.url if profile and getattr(profile, 'avatar') else None
+        return data
+
+    def validate_username(self, value):
+        """Validate username uniqueness when updating"""
+        user = self.instance
+        if user and User.objects.filter(username=value).exclude(pk=user.pk).exists():
+            raise serializers.ValidationError("This username is already taken")
+        return value
+
+    def validate_email(self, value):
+        """Validate email format and uniqueness"""
+        if not value:
+            raise serializers.ValidationError("Email is required")
+        
+        # Basic email format validation
+        if '@' not in value or '.' not in value.split('@')[-1]:
+            raise serializers.ValidationError("Invalid email format")
+        
+        # Check uniqueness when updating
+        user = self.instance
+        if user and User.objects.filter(email=value).exclude(pk=user.pk).exists():
+            raise serializers.ValidationError("This email is already in use")
+        
+        return value.lower()
+
+    def validate_phone(self, value):
+        """Validate phone number using phonenumbers library"""
+        if not value or value.strip() == "":
+            return ""  # Allow empty phone
+        
+        raw = value.strip()
+        try:
+            # Use NP (Nepal) as default region; adjust if needed
+            pn = phonenumbers.parse(raw, "NP")
+            if not phonenumbers.is_valid_number(pn):
+                raise serializers.ValidationError("Invalid phone number")
+            # Return normalized E.164 format
+            return phonenumbers.format_number(pn, phonenumbers.PhoneNumberFormat.E164)
+        except phonenumbers.NumberParseException:
+            raise serializers.ValidationError("Invalid phone number format. Use format like +977-9841234567 or 9841234567")
+
+    def update(self, instance, validated_data):
+        phone = validated_data.pop("phone", None)
+        for field in ["username", "email", "first_name", "last_name"]:
+            if field in validated_data:
+                setattr(instance, field, validated_data[field])
+        instance.save()
+        if phone is not None:
+            profile, _ = UserProfile.objects.get_or_create(user=instance)
+            profile.phone = phone
+            profile.save()
+        return instance
 
 
 class AlertSerializer(serializers.ModelSerializer):

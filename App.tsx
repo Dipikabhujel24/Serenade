@@ -3,9 +3,15 @@ import { StyleSheet, Text, View } from 'react-native';
 import React from "react";
 import { NavigationContainer } from "@react-navigation/native";
 import AuthNavigator from "./src/navigation/AuthNavigator";
+import { useEffect } from "react";
+import { connectRealtime, disconnectRealtime } from "./src/services/realtime";
 
 
 export default function App() {
+  useEffect(() => {
+    connectRealtime();
+    return () => disconnectRealtime();
+  }, []);
   return (
     <NavigationContainer>
       <AuthNavigator />

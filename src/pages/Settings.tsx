@@ -10,6 +10,8 @@ import {
   TextInput,
   Switch,
 } from "react-native";
+import { useBattery } from "../hooks/useBattery";
+import { useLowBatteryAlert } from "../hooks/useLowBatteryAlert";
 
 export default function Settings({ navigation }: any) {
   /* ================= Emergency Contacts ================= */
@@ -47,10 +49,10 @@ export default function Settings({ navigation }: any) {
   };
 
   /* ================= Low Battery Alert ================= */
-  const [batteryAlertEnabled, setBatteryAlertEnabled] =
-    useState(true);
-  const batteryThreshold = 15;
+  const { percentage: batteryPercentage, isCharging } = useBattery();
+  const { isEnabled: batteryAlertEnabled, setEnabled: setBatteryAlertEnabled, threshold: batteryThreshold } = useLowBatteryAlert();
   const [offlineSmsMode, setOfflineSmsMode] = useState(false);
+  const [shakeSosEnabled, setShakeSosEnabled] = useState(false);
 
   useEffect(() => {
     const loadPref = async () => {
@@ -60,6 +62,8 @@ export default function Settings({ navigation }: any) {
         const AsyncStorage = require("@react-native-async-storage/async-storage");
         const v = await AsyncStorage.getItem("offline_sms_mode");
         setOfflineSmsMode(v === "true");
+        const s = await AsyncStorage.getItem("shake_sos_enabled");
+        setShakeSosEnabled(s === "true");
       } catch (e) {
         console.warn("Failed to load offline_sms_mode", e);
       }
@@ -69,10 +73,24 @@ export default function Settings({ navigation }: any) {
 
   /* ================= App Settings Handler ================= */
   const handleAppSetting = (item: string) => {
-    if (item === "Notification") {
-      navigation.navigate("Notifications");
-    } else {
-      Alert.alert(item, `${item} settings opened`);
+    switch (item) {
+      case "Notification":
+        navigation.navigate("Notification");
+        break;
+      case "Privacy & Security":
+        navigation.navigate("PrivacySecurity");
+        break;
+      case "Language":
+        navigation.navigate("Language");
+        break;
+      case "About":
+        navigation.navigate("About");
+        break;
+      case "Help":
+        navigation.navigate("Help");
+        break;
+      default:
+        Alert.alert(item, `${item} settings opened`);
     }
   };
 
@@ -121,24 +139,38 @@ export default function Settings({ navigation }: any) {
           🔋 Low Battery Alert
         </Text>
         <Text style={styles.sub}>
-          Automatically send your location when battery drops
-          below threshold
+          Automatically send SOS with your location when battery drops below {batteryThreshold}%
         </Text>
 
         <View style={styles.row}>
           <Text>Enable Alert</Text>
           <Switch
             value={batteryAlertEnabled}
-            onValueChange={setBatteryAlertEnabled}
+            onValueChange={async (val) => {
+              await setBatteryAlertEnabled(val);
+              Alert.alert(
+                val ? "✅ Enabled" : "⚠️ Disabled",
+                val
+                  ? `Low battery alert is now active. When your battery drops below ${batteryThreshold}%, an automatic SOS will be sent to your emergency contacts.`
+                  : "Low battery alert has been disabled. No automatic alerts will be sent."
+              );
+            }}
           />
         </View>
 
         <Text style={styles.label}>
           Alert Threshold: {batteryThreshold}%
         </Text>
-        <View style={styles.fakeSlider} />
+        <View style={[styles.fakeSlider, { width: `${batteryThreshold}%` }]} />
 
-        <Text style={styles.sub}>Current Battery: 85%</Text>
+        <Text style={[styles.sub, { color: batteryPercentage <= batteryThreshold ? '#F44336' : '#000', fontWeight: batteryPercentage <= batteryThreshold ? '700' : '400' }]}>
+          Current Battery: {batteryPercentage}%{isCharging ? ' ⚡ Charging' : ''}
+        </Text>
+        {batteryPercentage <= batteryThreshold && !isCharging && batteryAlertEnabled && (
+          <Text style={{ color: '#F44336', fontSize: 11, marginTop: 8, fontWeight: '600' }}>
+            ⚠️ Battery low! Alert will trigger automatically
+          </Text>
+        )}
       </View>
 
       {/* ================= App Settings ================= */}
@@ -171,6 +203,24 @@ export default function Settings({ navigation }: any) {
                 Alert.alert("Saved", `Offline SMS Mode ${val ? "enabled" : "disabled"}`);
               } catch (e) {
                 console.warn("Failed to save offline_sms_mode", e);
+              }
+            }}
+          />
+        </View>
+
+        <View style={[styles.settingRow, { alignItems: "center" }]}>
+          <Text>Shake to SOS (Hidden trigger)</Text>
+          <Switch
+            value={shakeSosEnabled}
+            onValueChange={async (val) => {
+              setShakeSosEnabled(val);
+              try {
+                // eslint-disable-next-line @typescript-eslint/no-var-requires
+                const AsyncStorage = require("@react-native-async-storage/async-storage");
+                await AsyncStorage.setItem("shake_sos_enabled", val ? "true" : "false");
+                Alert.alert("Saved", `Shake SOS ${val ? "enabled" : "disabled"}`);
+              } catch (e) {
+                console.warn("Failed to save shake_sos_enabled", e);
               }
             }}
           />

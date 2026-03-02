@@ -1,13 +1,82 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
-  Text,
+  Text, 
   StyleSheet,
   TouchableOpacity,
   ScrollView,
+  Image,
+  Alert,
+  Platform,
 } from "react-native";
+import * as ImagePicker from 'expo-image-picker';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+import { currentHost } from '../services/apiHost';
 
 export default function Profile({ navigation }: any) {
+  const [avatarUri, setAvatarUri] = useState<string | null>(null);
+  const [email, setEmail] = useState('abc@gmail.com');
+
+  useEffect(() => {
+    (async () => {
+      // load known avatar from AsyncStorage if any
+      try {
+        const a = await AsyncStorage.getItem('avatar');
+        if (a) setAvatarUri(a);
+      } catch {}
+    })();
+  }, []);
+
+  const pickAndUpload = async () => {
+    try {
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (perm.status !== 'granted') {
+        Alert.alert('Camera permission required');
+        return;
+      }
+
+      const res = await ImagePicker.launchCameraAsync({ allowsEditing: true, aspect: [1,1], quality: 0.6 });
+      if (res.canceled) return;
+      const uri = res.assets[0].uri;
+      setAvatarUri(uri);
+
+      // Upload to server
+      const token = await AsyncStorage.getItem('accessToken');
+      const host = currentHost();
+      const url = `http://${host}:8000/api/accounts/profile/avatar/`;
+
+      const form = new FormData();
+      const filename = uri.split('/').pop() || 'avatar.jpg';
+      const match = filename.match(/\.([0-9a-z]+)$/i);
+      const ext = match ? match[1] : 'jpg';
+      const mime = `image/${ext === 'jpg' ? 'jpeg' : ext}`;
+      // @ts-ignore
+      form.append('avatar', { uri, name: filename, type: mime });
+
+      const headers: any = { 'Accept': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const resp = await fetch(url, { method: 'POST', body: form, headers });
+      if (!resp.ok) {
+        const txt = await resp.text().catch(() => null);
+        throw new Error(`Upload failed: ${resp.status} ${txt || resp.statusText}`);
+      }
+      const data = await resp.json();
+      if (data && data.status === 'success' && data.avatar) {
+        const avatarUrl = data.avatar.startsWith('http') ? data.avatar : `http://${host}${data.avatar}`;
+        setAvatarUri(avatarUrl);
+        await AsyncStorage.setItem('avatar', avatarUrl);
+        Alert.alert('Success', 'Profile photo updated');
+      } else {
+        throw new Error('Upload did not return avatar URL');
+      }
+    } catch (e: any) {
+      console.warn('Avatar upload failed', e);
+      Alert.alert('Upload failed', e?.message || String(e));
+    }
+  };
+
   return (
     <ScrollView contentContainerStyle={styles.container}>
       {/* Header with Back Arrow */}
@@ -26,12 +95,16 @@ export default function Profile({ navigation }: any) {
 
       {/* Avatar Card */}
       <View style={styles.avatarCard}>
-        <View style={styles.avatar}>
-          <Text>User{"\n"}Avatar</Text>
-        </View>
-        <Text style={styles.email}>abc@gmail.com</Text>
+        <TouchableOpacity onPress={pickAndUpload} style={styles.avatar}>
+          {avatarUri ? (
+            <Image source={{ uri: avatarUri }} style={{ width: 80, height: 80, borderRadius: 40 }} />
+          ) : (
+            <Text>User{"\n"}Avatar</Text>
+          )}
+        </TouchableOpacity>
+        <Text style={styles.email}>{email}</Text>
 
-        <TouchableOpacity style={styles.editBtn}>
+        <TouchableOpacity style={styles.editBtn} onPress={() => navigation.navigate('Profile') }>
           <Text>Edit Profile</Text>
         </TouchableOpacity>
       </View>
