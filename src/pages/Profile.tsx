@@ -10,9 +10,9 @@ import {
   Platform,
 } from "react-native";
 import * as ImagePicker from 'expo-image-picker';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getStoredItem, setStoredItem } from '../services/storage.js';
 
-import { currentHost } from '../services/apiHost';
+import { currentHost } from '../services/apiHost.js';
 
 export default function Profile({ navigation }: any) {
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
@@ -22,7 +22,7 @@ export default function Profile({ navigation }: any) {
     (async () => {
       // load known avatar from AsyncStorage if any
       try {
-        const a = await AsyncStorage.getItem('avatar');
+        const a = await getStoredItem('avatar');
         if (a) setAvatarUri(a);
       } catch {}
     })();
@@ -42,7 +42,7 @@ export default function Profile({ navigation }: any) {
       setAvatarUri(uri);
 
       // Upload to server
-      const token = await AsyncStorage.getItem('accessToken');
+      const token = await getStoredItem('accessToken');
       const host = currentHost();
       const url = `http://${host}:8000/api/accounts/profile/avatar/`;
 
@@ -66,7 +66,7 @@ export default function Profile({ navigation }: any) {
       if (data && data.status === 'success' && data.avatar) {
         const avatarUrl = data.avatar.startsWith('http') ? data.avatar : `http://${host}${data.avatar}`;
         setAvatarUri(avatarUrl);
-        await AsyncStorage.setItem('avatar', avatarUrl);
+        await setStoredItem('avatar', avatarUrl);
         Alert.alert('Success', 'Profile photo updated');
       } else {
         throw new Error('Upload did not return avatar URL');

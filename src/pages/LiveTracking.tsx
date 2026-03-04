@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from "react";
 import { View, Text, FlatList, StyleSheet } from "react-native";
-import { getRecentLocations } from "../services/api";
+import { getRecentLocations } from "../services/api.js";
 
 export default function LiveTracking() {
   const [locations, setLocations] = useState<any[]>([]);

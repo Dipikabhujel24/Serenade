@@ -7,8 +7,8 @@ import {
   TouchableOpacity,
   Linking,
 } from "react-native";
-import { PageHeader } from "../components/PageHeader";
-import { theme } from "../theme";
+import { PageHeader } from "../components/PageHeader.js";
+import { theme } from "../theme.js";
 
 export default function AboutPage({ navigation }: any) {
   const openLink = (url: string) => {

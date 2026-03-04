@@ -1,7 +1,7 @@
 import { Platform, PermissionsAndroid } from "react-native";
 import Constants from "expo-constants";
-import { getLiveLocation } from "./locationService";
-import { sosAlert } from "./api";
+import { getLiveLocation } from "./locationService.js";
+import { sosAlert } from "./api.js";
 
 let webRecognition: any = null;
 let Voice: any = null;
@@ -128,7 +128,7 @@ async function startNativeVoice(onStatus?: (s: string) => void) {
   }
 }
 
-export function startVoiceMonitor(onStatus?: (s: string) => void) {
+export async function startVoiceMonitor(onStatus?: (s: string) => void) {
   if (Platform.OS === "web") {
     const win: any = window as any;
     const SpeechRecognition = win.SpeechRecognition || win.webkitSpeechRecognition;
@@ -169,7 +169,7 @@ export function startVoiceMonitor(onStatus?: (s: string) => void) {
     return true;
   }
 
-  return startNativeVoice(onStatus);
+  return await startNativeVoice(onStatus);
 }
 
 // Diagnostic helper: returns a short string describing whether voice recognition is available

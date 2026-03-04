@@ -14,6 +14,7 @@
     },
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.anonymous.serenade",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Serenade needs microphone access for voice-activated SOS.",
         "NSSpeechRecognitionUsageDescription": "Serenade uses speech recognition to trigger SOS when you say Help Me."
@@ -24,6 +25,7 @@
         "foregroundImage": "./assets/images/Logo.png",
         "backgroundColor": "#ffffff"
       },
+      "package": "com.anonymous.serenade",
       "permissions": [
         "RECORD_AUDIO"
       ],

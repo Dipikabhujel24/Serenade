@@ -1,21 +1,21 @@
 import React from "react";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import SplashPage from "../pages/SplashPage";
-import SignupPage from "../pages/SignupPage";
-import LoginPage from "../pages/LoginPage";
-import Dashboard from "../pages/Dashboard";
-import FakeCall from "../pages/FakeCall";
-import Settings from "../pages/Settings";
-import Menu from "../pages/Menu";
-import Profile from "../pages/Profile";
-import Notifications from "../pages/Notification";
-import SafetyCompanion from "../pages/SafetyCompanion";
-import LiveTracking from "../pages/LiveTracking";
-import ContactsPage from "../pages/ContactsPage";
-import AboutPage from "../pages/AboutPage";
-import HelpPage from "../pages/HelpPage";
-import PrivacySecurityPage from "../pages/PrivacySecurityPage";
-import LanguagePage from "../pages/LanguagePage";
+import SplashPage from "../pages/SplashPage.js";
+import SignupPage from "../pages/SignupPage.js";
+import LoginPage from "../pages/LoginPage.js";
+import Dashboard from "../pages/Dashboard.js";
+import FakeCall from "../pages/FakeCall.js";
+import Settings from "../pages/Settings.js";
+import Menu from "../pages/Menu.js";
+import Profile from "../pages/Profile.js";
+import Notifications from "../pages/Notification.js";
+import SafetyCompanion from "../pages/SafetyCompanion.js";
+import LiveTracking from "../pages/LiveTracking.js";
+import ContactsPage from "../pages/ContactsPage.js";
+import AboutPage from "../pages/AboutPage.js";
+import HelpPage from "../pages/HelpPage.js";
+import PrivacySecurityPage from "../pages/PrivacySecurityPage.js";
+import LanguagePage from "../pages/LanguagePage.js";
 
 export type AuthStackParamList = {
   Splash: undefined;

@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, RefreshControl, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { getAlertHistory } from '../services/api';
+import { getAlertHistory } from '../services/api.js';
 
 const PAGE_SIZE = 10;
 

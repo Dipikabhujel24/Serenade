@@ -9,8 +9,8 @@ import {
   Alert,
 } from "react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { AuthStackParamList } from "../navigation/AuthNavigator";
-import { signupUser } from "../services/api";
+import { AuthStackParamList } from "../navigation/AuthNavigator.js";
+import { signupUser } from "../services/api.js";
 
 type Props = NativeStackScreenProps<AuthStackParamList, "Signup">;
 

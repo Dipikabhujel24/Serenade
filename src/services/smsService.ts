@@ -1,5 +1,5 @@
 import { Linking, Platform } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getStoredItem } from "./storage.js";
 // Prefer expo-sms when available (opens composer). Falls back to Linking if not.
 let SMS: any = null;
 try {
@@ -42,7 +42,7 @@ export async function sendSmsToContacts(contacts: string[], message: string) {
 
 export async function getStoredEmergencyContacts(): Promise<string[]> {
   try {
-    const raw = await AsyncStorage.getItem("emergency_contacts");
+    const raw = await getStoredItem("emergency_contacts");
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     // parsed may be array of objects {name, phone} (EmergencyContacts.tsx) or simple strings (Settings.tsx)

@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert } from "react-native";
-import { PageHeader } from "../components/PageHeader";
-import { theme } from "../theme";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { PageHeader } from "../components/PageHeader.js";
+import { theme } from "../theme.js";
+import { getStoredItem, setStoredItem } from "../services/storage.js";
 
 const LANGUAGES = [
   { code: "en", name: "English", nativeName: "English", flag: "🇬🇧" },
@@ -25,7 +25,7 @@ export default function LanguagePage({ navigation }: any) {
 
   const loadLanguage = async () => {
     try {
-      const saved = await AsyncStorage.getItem("app_language");
+      const saved = await getStoredItem("app_language");
       if (saved) {
         setSelectedLanguage(saved);
       }
@@ -38,7 +38,7 @@ export default function LanguagePage({ navigation }: any) {
 
   const handleLanguageSelect = async (langCode: string) => {
     try {
-      await AsyncStorage.setItem("app_language", langCode);
+      await setStoredItem("app_language", langCode);
       setSelectedLanguage(langCode);
 
       const selectedLang = LANGUAGES.find((l) => l.code === langCode);

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import useLocationTracker from "../hooks/useLocationTracker";
+import useLocationTracker from "../hooks/useLocationTracker.js";
 import {
   View,
   Text,

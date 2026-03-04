@@ -7,8 +7,8 @@ import {
   StyleSheet,
   Alert,
 } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { loginUser } from "../services/api"; 
+import { setStoredItem } from "../services/storage.js";
+import { loginUser } from "../services/api.js"; 
 
 export default function LoginScreen({ navigation }: any) {
   const [username, setUsername] = useState("");
@@ -24,13 +24,18 @@ export default function LoginScreen({ navigation }: any) {
       const data = await loginUser(username, password);
 
       // ✅ Save token + username
-      await AsyncStorage.setItem("accessToken", data.access);
-      await AsyncStorage.setItem("username", data.username);
+      await setStoredItem("accessToken", data.access);
+      await setStoredItem("username", data.username);
 
       // ✅ Navigate to dashboard
       navigation.replace("Dashboard");
     } catch (error: any) {
-      Alert.alert("Login Failed", error.message);
+      if (error && error.suppressAlert) {
+        // Network unavailable or timeout — log but don't show a blocking alert
+        console.warn("Login suppressed error:", error.message || error);
+        return;
+      }
+      Alert.alert("Login Failed", error.message || String(error));
     }
   };
 

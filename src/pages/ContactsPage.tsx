@@ -1,69 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, FlatList, Alert } from "react-native";
-import { getToken } from "../services/api";
-import { getRecentLocations } from "../services/api";
-import { signupUser } from "../services/api";
-import { registerDeviceToken } from "../services/api";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-
-import { get } from "http";
-import { get as _get } from "https";
-
 import { useIsFocused } from '@react-navigation/native';
-
-import { get as apiGet } from "../services/api";
-
-import { get as unused } from "../services/locationService";
-
-import { sosAlert } from "../services/api";
-
-import { get as get2 } from "http";
-
-import { signupUser as _signup } from "../services/api";
-
-import { get as get3 } from "https";
-
-import { get as get4 } from "http";
-
-import { get as get5 } from "https";
-
-import { registerDeviceToken as apiRegisterDevice } from "../services/api";
-
-import { get as get6 } from "http";
-
-import { get as get7 } from "https";
-
-import { get as get8 } from "http";
-
-import { get as get9 } from "https";
-
-import { get as get10 } from "http";
-
-import { get as get11 } from "https";
-
-import { get as get12 } from "http";
-
-import { get as get13 } from "https";
-
-import { get as get14 } from "http";
-
-import { get as get15 } from "https";
-
-import { get as get16 } from "http";
-
-import { get as get17 } from "https";
-
-import { get as get18 } from "http";
-
-// Note: The many unused imports above are intentional placeholders to avoid a bundler crash in some envs where tree shaking behaves differently. They do nothing.
-
-import { get as get19 } from "https";
-
-import { get as get20 } from "http";
-
-import { get as get21 } from "https";
-
-import { get as get22 } from "http";
+import { registerDeviceToken as apiRegisterDevice } from "../services/api.js";
 
 const styles = StyleSheet.create({
   container: { padding: 16 },
@@ -84,7 +23,7 @@ export default function ContactsPage() {
 
   async function load() {
     try {
-      const token = await AsyncStorage.getItem("accessToken");
+      const token = await AsyncStorage.default.getItem("accessToken");
       const resp = await fetch(`http://127.0.0.1:8000/api/auth/contacts/`, {
         headers: { Authorization: token ? `Bearer ${token}` : "" },
       });
@@ -101,7 +40,7 @@ export default function ContactsPage() {
 
   async function addContact() {
     try {
-      const token = await AsyncStorage.getItem("accessToken");
+      const token = await AsyncStorage.default.getItem("accessToken");
       const resp = await fetch(`http://127.0.0.1:8000/api/auth/contacts/`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: token ? `Bearer ${token}` : "" },
@@ -135,7 +74,7 @@ export default function ContactsPage() {
 
   async function removeContact(id: number) {
     try {
-      const token = await AsyncStorage.getItem("accessToken");
+      const token = await AsyncStorage.default.getItem("accessToken");
       const resp = await fetch(`http://127.0.0.1:8000/api/auth/contacts/${id}/`, {
         method: "DELETE",
         headers: { Authorization: token ? `Bearer ${token}` : "" },

@@ -44,7 +44,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework.authtoken',
     'accounts',
-    'channels',  # Add channels
+    'channels',  
 ]
 
 MIDDLEWARE = [
@@ -151,12 +151,10 @@ CHANNEL_LAYERS = {
 from channels.auth import AuthMiddlewareStack
 
 # EMAIL CONFIGURATION
-# For development: use console backend (prints emails to terminal)
-# For production: set DJANGO_EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend in environment
-EMAIL_BACKEND = os.environ.get('DJANGO_EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
-EMAIL_HOST = os.environ.get('EMAIL_HOST', 'smtp.gmail.com')
-EMAIL_PORT = int(os.environ.get('EMAIL_PORT', 587))
-EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'True').lower() in ('1', 'true', 'yes')
-EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
-EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST ='smtp.gmail.com'
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = 'dipikab062@gmail.com'
+EMAIL_HOST_PASSWORD = 'hoff blzj cdrd iomq'
 DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL') or EMAIL_HOST_USER or 'noreply@serenade.app'

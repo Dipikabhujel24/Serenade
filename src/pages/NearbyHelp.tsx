@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Linking, ScrollView, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { getLiveLocation } from '../services/locationService';
-import { getNearbyHospitals, getNearbyPoliceStations } from '../services/places';
+import { getLiveLocation } from '../services/locationService.js';
+import { getNearbyHospitals, getNearbyPoliceStations } from '../services/places.js';
 
 function openDirections(lat: number, lon: number) {
   const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}&travelmode=walking`;

@@ -8,7 +8,7 @@ import {
   Linking,
   Alert,
 } from "react-native";
-import { connectRealtime, disconnectRealtime, onRealtime } from "../services/realtime";
+import { connectRealtime, disconnectRealtime, onRealtime } from "../services/realtime.js";
 
 export default function Notifications({ navigation }: any) {
   const [items, setItems] = useState<Array<{title:string;desc:string}>>([]);

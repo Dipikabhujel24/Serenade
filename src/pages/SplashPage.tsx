@@ -9,7 +9,7 @@ import {
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { AuthStackParamList } from "../navigation/AuthNavigator";
+import { AuthStackParamList } from "../navigation/AuthNavigator.js";
 
 type Props = NativeStackScreenProps<AuthStackParamList, "Splash">;
 

@@ -10,8 +10,9 @@ import {
   TextInput,
   Switch,
 } from "react-native";
-import { useBattery } from "../hooks/useBattery";
-import { useLowBatteryAlert } from "../hooks/useLowBatteryAlert";
+import { useBattery } from "../hooks/useBattery.js";
+import { useLowBatteryAlert } from "../hooks/useLowBatteryAlert.js";
+import { getStoredItem, setStoredItem } from "../services/storage.js";
 
 export default function Settings({ navigation }: any) {
   /* ================= Emergency Contacts ================= */
@@ -52,20 +53,20 @@ export default function Settings({ navigation }: any) {
   const { percentage: batteryPercentage, isCharging } = useBattery();
   const { isEnabled: batteryAlertEnabled, setEnabled: setBatteryAlertEnabled, threshold: batteryThreshold } = useLowBatteryAlert();
   const [offlineSmsMode, setOfflineSmsMode] = useState(false);
+  const [offlineMode, setOfflineMode] = useState(false);
   const [shakeSosEnabled, setShakeSosEnabled] = useState(false);
 
   useEffect(() => {
     const loadPref = async () => {
       try {
-        // lazy-load AsyncStorage to avoid adding top-level import if unused
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const AsyncStorage = require("@react-native-async-storage/async-storage");
-        const v = await AsyncStorage.getItem("offline_sms_mode");
+        const v = await getStoredItem("offline_sms_mode");
         setOfflineSmsMode(v === "true");
-        const s = await AsyncStorage.getItem("shake_sos_enabled");
+        const s = await getStoredItem("shake_sos_enabled");
         setShakeSosEnabled(s === "true");
+        const off = await getStoredItem("offline_mode");
+        setOfflineMode(off === "true");
       } catch (e) {
-        console.warn("Failed to load offline_sms_mode", e);
+        console.warn("Failed to load preferences", e);
       }
     };
     loadPref();
@@ -197,12 +198,26 @@ export default function Settings({ navigation }: any) {
             onValueChange={async (val) => {
               setOfflineSmsMode(val);
               try {
-                // eslint-disable-next-line @typescript-eslint/no-var-requires
-                const AsyncStorage = require("@react-native-async-storage/async-storage");
-                await AsyncStorage.setItem("offline_sms_mode", val ? "true" : "false");
+                await setStoredItem("offline_sms_mode", val ? "true" : "false");
                 Alert.alert("Saved", `Offline SMS Mode ${val ? "enabled" : "disabled"}`);
               } catch (e) {
                 console.warn("Failed to save offline_sms_mode", e);
+              }
+            }}
+          />
+        </View>
+
+        <View style={[styles.settingRow, { alignItems: "center" }]}>
+          <Text>Offline Mode (Disable network)</Text>
+          <Switch
+            value={offlineMode}
+            onValueChange={async (val) => {
+              setOfflineMode(val);
+              try {
+                await setStoredItem("offline_mode", val ? "true" : "false");
+                Alert.alert("Saved", `Offline Mode ${val ? "enabled" : "disabled"}`);
+              } catch (e) {
+                console.warn("Failed to save offline_mode", e);
               }
             }}
           />

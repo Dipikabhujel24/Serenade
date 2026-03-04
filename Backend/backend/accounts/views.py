@@ -153,228 +153,39 @@ def sos_alert(request):
 
 
 def notify_emergency_contacts(alert):
-    """Notify emergency contacts via SMS and email"""
+    from django.core.mail import send_mail
+
     try:
         contacts = account_models.EmergencyContact.objects.filter(user=alert.user)
+
         if not contacts.exists():
-            logger.info("No emergency contacts found for user %s", alert.user.id)
+            logger.info("No emergency contacts found")
             return
 
-        sms_body = f"ALERT: {alert.alert_type.upper()} from {alert.user.username}"
-        if alert.message:
-            sms_body += f" - {alert.message}"
-        if alert.latitude and alert.longitude:
-            sms_body += f"\nLocation: https://maps.google.com/?q={alert.latitude},{alert.longitude}"
+        message = f"""
+EMERGENCY SOS ALERT
 
-        logger.warning("EMERGENCY ALERT - User: %s, Type: %s, Contacts: %d", alert.user.username, alert.alert_type, contacts.count())
+User: {alert.user.username}
+Message: {alert.message}
+
+Location:
+https://maps.google.com/?q={alert.latitude},{alert.longitude}
+"""
+
         for contact in contacts:
-            logger.warning("  → Contact: %s (%s) %s", contact.name, contact.phone, contact.email or "")
+            if contact.email:
+                send_mail(
+                    subject="🚨 EMERGENCY SOS ALERT",
+                    message=message,
+                    from_email=settings.EMAIL_HOST_USER,
+                    recipient_list=[contact.email],
+                    fail_silently=False,
+                )
 
-        send_sms_alerts(alert, contacts, sms_body)
-
-        try:
-            latitude = alert.latitude
-            longitude = alert.longitude
-            maps_link = f"https://www.google.com/maps?q={latitude},{longitude}" if latitude and longitude else ""
-            subject = "🚨 EMERGENCY SOS ALERT - Serenade Safety App"
-            email_body = f"""
-              EMERGENCY ALERT!
-
-           {alert.user.username} has triggered an SOS alert.
-
-           Alert Type: {alert.alert_type}
-           Message: {alert.message}
-
-            Location:
-            {maps_link}
-
-            Time: {alert.created_at}
-
-            Please contact them immediately.
-
-            This message was sent automatically by Serenade Safety Application.
-            """
-
-            recipients = []
-            if alert.user.email:
-                recipients.append(alert.user.email)
-            for contact in contacts:
-                if contact.email:
-                    recipients.append(contact.email)
-
-            if recipients:
-                try:
-                    from .tasks import send_email_async
-
-                    text_body = email_body
-                    html_body = (
-                        f"<p><strong>EMERGENCY ALERT!</strong></p>"
-                        f"<p>{alert.user.username} has triggered an SOS alert.</p>"
-                        f"<p><strong>Alert Type:</strong> {alert.alert_type}</p>"
-                        f"<p><strong>Message:</strong> {alert.message}</p>"
-                        f"<p><strong>Location:</strong> <a href=\"{maps_link}\">Open in Google Maps</a></p>"
-                        f"<p><em>Please contact them immediately.</em></p>"
-                    )
-
-                    send_email_async(subject=subject, text_body=text_body, html_body=html_body, from_email=settings.DEFAULT_FROM_EMAIL, recipients=recipients)
-                    logger.warning("Enqueued background email to: %s", recipients)
-                except Exception as e:
-                    logger.exception("Failed to enqueue background email: %s", e)
-            else:
-                logger.warning("No email recipients found for SOS alert")
-        except Exception as e:
-            logger.exception("Failed to send email alerts: %s", e)
+                logger.warning("Email sent to %s", contact.email)
 
     except Exception as e:
-        logger.exception("Failed to notify emergency contacts: %s", e)
-
-
-def send_sms_alerts(alert, contacts, sms_body):
-    """Send SMS alerts to emergency contacts via Twilio with rate limiting and normalization."""
-    import os
-    import phonenumbers
-    from twilio.base.exceptions import TwilioRestException
-
-    tw_sid = os.environ.get("TWILIO_ACCOUNT_SID")
-    tw_token = os.environ.get("TWILIO_AUTH_TOKEN")
-    tw_from = os.environ.get("TWILIO_FROM_NUMBER")
-
-    if not (tw_sid and tw_token and tw_from):
-        logger.info("Twilio not configured. Queueing SMS for manual processing.")
-        for contact in contacts:
-            phone_val = contact.phone
-            try:
-                pn = phonenumbers.parse(phone_val, "NP")
-                if phonenumbers.is_valid_number(pn):
-                    phone_val = phonenumbers.format_number(pn, phonenumbers.PhoneNumberFormat.E164)
-            except Exception:
-                logger.debug("Contact phone normalization failed for %s", phone_val)
-
-            account_models.SMSQueue.objects.create(phone=phone_val, body=sms_body, alert=alert, status="pending")
-        return
-
-    # Rate limiting setup
-    try:
-        from django.utils import timezone as dj_timezone
-        from .models import SMSRateLimit
-        from django.conf import settings as dj_settings
-    except Exception:
-        SMSRateLimit = None
-        dj_timezone = None
-        dj_settings = None
-
-    GLOBAL_DAILY_LIMIT = getattr(dj_settings, "SMS_GLOBAL_DAILY_LIMIT", 500)
-    USER_DAILY_LIMIT = getattr(dj_settings, "SMS_PER_USER_DAILY_LIMIT", 20)
-
-    def _get_rate_record(key):
-        if not SMSRateLimit or not dj_timezone:
-            return None
-        today = dj_timezone.now().date()
-        obj, _ = SMSRateLimit.objects.get_or_create(key=key, date=today)
-        return obj
-
-    user_key = f"user_{alert.user.id}" if getattr(alert, 'user', None) else "anonymous"
-    global_rec = _get_rate_record("global")
-    user_rec = _get_rate_record(user_key)
-
-    if global_rec and global_rec.count >= GLOBAL_DAILY_LIMIT:
-        for contact in contacts:
-            account_models.SMSQueue.objects.create(phone=contact.phone, body=sms_body, alert=alert, status="pending", last_error="global_rate_exceeded")
-        logger.warning("Global SMS daily limit reached; queued %d messages", len(contacts))
-        return
-
-    if user_rec and user_rec.count >= USER_DAILY_LIMIT:
-        for contact in contacts:
-            account_models.SMSQueue.objects.create(phone=contact.phone, body=sms_body, alert=alert, status="pending", last_error="user_rate_exceeded")
-        logger.warning("User %s SMS daily limit reached; queued %d messages", user_key, len(contacts))
-        return
-
-    try:
-        from twilio.rest import Client
-
-        client = Client(tw_sid, tw_token)
-
-        for idx, contact in enumerate(contacts):
-            phone_val = contact.phone
-            try:
-                pn = phonenumbers.parse(phone_val, "NP")
-                if phonenumbers.is_valid_number(pn):
-                    phone_val = phonenumbers.format_number(pn, phonenumbers.PhoneNumberFormat.E164)
-                else:
-                    raise ValueError("Invalid phone number")
-            except Exception as se:
-                logger.exception("Phone normalization failed for %s: %s", contact.phone, se)
-                account_models.SMSQueue.objects.create(phone=contact.phone, body=sms_body, alert=alert, status="failed", last_error="invalid_phone_format")
-                continue
-
-            # Re-check limits
-            global_rec = _get_rate_record("global")
-            user_rec = _get_rate_record(user_key)
-            if global_rec and global_rec.count >= GLOBAL_DAILY_LIMIT:
-                remaining = list(contacts)[idx:]
-                for rc in remaining:
-                    account_models.SMSQueue.objects.create(phone=rc.phone, body=sms_body, alert=alert, status="pending", last_error="global_rate_exceeded")
-                logger.warning("Global SMS daily limit reached mid-loop; queued %d messages", len(remaining))
-                return
-            if user_rec and user_rec.count >= USER_DAILY_LIMIT:
-                remaining = list(contacts)[idx:]
-                for rc in remaining:
-                    account_models.SMSQueue.objects.create(phone=rc.phone, body=sms_body, alert=alert, status="pending", last_error="user_rate_exceeded")
-                logger.warning("User SMS daily limit reached mid-loop; queued %d messages", len(remaining))
-                return
-
-            try:
-                # Reserve counters
-                if global_rec:
-                    global_rec.count += 1
-                    global_rec.save()
-                if user_rec:
-                    user_rec.count += 1
-                    user_rec.save()
-
-                client.messages.create(body=sms_body, from_=tw_from, to=phone_val)
-                logger.info("Sent SMS to %s for alert %s", phone_val, alert.id)
-            except TwilioRestException as tre:
-                logger.exception("Twilio error sending SMS to %s: %s", phone_val, tre)
-                err_code = getattr(tre, 'code', None)
-                if err_code == 63038 or ('63038' in str(tre)):
-                    if global_rec:
-                        global_rec.count = max(0, global_rec.count - 1)
-                        global_rec.save()
-                    if user_rec:
-                        user_rec.count = max(0, user_rec.count - 1)
-                        user_rec.save()
-                    remaining = list(contacts)[idx:]
-                    for rc in remaining:
-                        account_models.SMSQueue.objects.create(phone=rc.phone, body=sms_body, alert=alert, status="pending", last_error="daily_limit_exceeded")
-                    logger.warning("Twilio daily limit reached; queued remaining %d messages", len(remaining))
-                    return
-                account_models.SMSQueue.objects.create(phone=phone_val, body=sms_body, alert=alert, status="failed", last_error=str(tre))
-                if global_rec:
-                    global_rec.count = max(0, global_rec.count - 1)
-                    global_rec.save()
-                if user_rec:
-                    user_rec.count = max(0, user_rec.count - 1)
-                    user_rec.save()
-            except Exception as se:
-                logger.exception("Failed to send SMS to %s: %s", phone_val, se)
-                account_models.SMSQueue.objects.create(phone=phone_val, body=sms_body, alert=alert, status="failed", last_error=str(se))
-                if global_rec:
-                    global_rec.count = max(0, global_rec.count - 1)
-                    global_rec.save()
-                if user_rec:
-                    user_rec.count = max(0, user_rec.count - 1)
-                    user_rec.save()
-    except ImportError:
-        logger.warning("Twilio SDK not installed. Queueing SMS messages.")
-        for contact in contacts:
-            account_models.SMSQueue.objects.create(phone=contact.phone, body=sms_body, alert=alert, status="pending")
-    except Exception as e:
-        logger.exception("Twilio client error: %s", e)
-        for contact in contacts:
-            account_models.SMSQueue.objects.create(phone=contact.phone, body=sms_body, alert=alert, status="failed")
-
-
+        logger.exception("Failed to send email alerts: %s", e)
 class ContactListCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -676,3 +487,15 @@ def safety_companion_acknowledge(request):
         return Response({"status": "success"})
     except account_models.SafetyCompanion.DoesNotExist:
         return Response({"status": "error", "error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+
+def send_email_async(subject, text_body, html_body, from_email, recipients):
+    """Send email asynchronously using Django's send_mail in a background thread."""
+    import threading
+
+    def _send():
+        try:
+            send_mail(subject=subject, message=text_body, from_email=from_email, recipient_list=recipients, html_message=html_body)
+        except Exception as e:
+            logger.exception("Failed to send email: %s", e)
+
+    threading.Thread(target=_send).start()

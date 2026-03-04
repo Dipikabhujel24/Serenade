@@ -1,69 +1,118 @@
 import React from "react";
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
+import { playRecordedVoice } from "../services/audioServices.js";
 
 export default function FakeCall({ navigation }: any) {
+
+  const handleAccept = async () => {
+    try {
+      await playRecordedVoice();
+    } catch (err) {
+      console.log("Voice playback failed:", err);
+    }
+  };
+
+  const handleReject = () => {
+    navigation.goBack();
+  };
+
   return (
     <View style={styles.container}>
-      <Text style={styles.caller}>Mom</Text>
-      <Text style={styles.incoming}>Incoming Call...</Text>
 
-      <View style={styles.buttons}>
-        <TouchableOpacity
-          style={[styles.btn, styles.reject]}
-          onPress={() => navigation.goBack()}
-        >
-          <Text style={styles.btnText}>Reject</Text>
+      {/* Caller Info */}
+      <View style={styles.callerSection}>
+        <Text style={styles.callerName}>Mom</Text>
+        <Text style={styles.callerType}>mobile</Text>
+      </View>
+
+      {/* Buttons */}
+      <View style={styles.buttonContainer}>
+
+        {/* Decline */}
+        <TouchableOpacity style={styles.declineWrapper} onPress={handleReject}>
+          <View style={[styles.circle, styles.decline]}>
+            <Text style={styles.icon}>✕</Text>
+          </View>
+          <Text style={styles.label}>Decline</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[styles.btn, styles.accept]}
-          onPress={() => navigation.goBack()}
-        >
-          <Text style={styles.btnText}>Accept</Text>
+        {/* Accept */}
+        <TouchableOpacity style={styles.acceptWrapper} onPress={handleAccept}>
+          <View style={[styles.circle, styles.accept]}>
+            <Text style={styles.icon}>✓</Text>
+          </View>
+          <Text style={styles.label}>Accept</Text>
         </TouchableOpacity>
+
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+
   container: {
     flex: 1,
     backgroundColor: "#000",
-    justifyContent: "center",
+    justifyContent: "space-between",
+    paddingVertical: 120,
+  },
+
+  callerSection: {
     alignItems: "center",
   },
-  caller: {
+
+  callerName: {
     color: "#FFF",
-    fontSize: 36,
-    fontWeight: "700",
-  },
-  incoming: {
-    color: "#AAA",
-    fontSize: 18,
-    marginTop: 10,
-  },
-  buttons: {
-    flexDirection: "row",
-    marginTop: 60,
-    gap: 40,
-  },
-  btn: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  accept: {
-    backgroundColor: "green",
-  },
-  reject: {
-    backgroundColor: "red",
-  },
-  btnText: {
-    color: "#FFF",
-    fontSize: 16,
+    fontSize: 42,
     fontWeight: "600",
+  },
+
+  callerType: {
+    color: "#bbb",
+    fontSize: 18,
+    marginTop: 6,
+  },
+
+  buttonContainer: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    paddingHorizontal: 40,
+  },
+
+  declineWrapper: {
+    alignItems: "center",
+  },
+
+  acceptWrapper: {
+    alignItems: "center",
+  },
+
+  circle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
+  decline: {
+    backgroundColor: "#ff3b30",
+  },
+
+  accept: {
+    backgroundColor: "#34c759",
+  },
+
+  icon: {
+    color: "#FFF",
+    fontSize: 28,
+    fontWeight: "bold",
+  },
+
+  label: {
+    color: "#FFF",
+    marginTop: 10,
+    fontSize: 16,
   },
 });

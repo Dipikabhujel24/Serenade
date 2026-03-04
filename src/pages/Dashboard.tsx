@@ -12,13 +12,13 @@ import {
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { SafeAreaView } from "react-native-safe-area-context";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { getLiveLocation } from "../services/locationService";
-import { sendLocation, sosAlert, initApiHostFromStorage } from "../services/api";
-import { getAlertHistory } from "../services/api";
-import { startVoiceMonitor, stopVoiceMonitor } from "../services/voiceAlert";
-import { sendSmsToContacts, getStoredEmergencyContacts } from "../services/smsService";
-import useShakeDetector from "../hooks/useShakeDetector";
+import { getStoredItem, setStoredItem } from "../services/storage.js";
+import { getLiveLocation } from "../services/locationService.js";
+import { sendLocation, sosAlert, initApiHostFromStorage } from "../services/api.js";
+import { getAlertHistory } from "../services/api.js";
+import { startVoiceMonitor, stopVoiceMonitor } from "../services/voiceAlert.js";
+import { sendSmsToContacts, getStoredEmergencyContacts } from "../services/smsService.js";
+import useShakeDetector from "../hooks/useShakeDetector.js";
 
 const shadowStyle = Platform.select({
   ios: {
@@ -55,7 +55,7 @@ export default function Dashboard({ navigation }: any) {
   useEffect(() => {
     const loadUser = async () => {
       try {
-        const name = await AsyncStorage.getItem("username");
+        const name = await getStoredItem("username");
         if (name) setUsername(name);
       } catch (e) {
         console.log("Failed to load username");
@@ -64,9 +64,9 @@ export default function Dashboard({ navigation }: any) {
     const loadPreferences = async () => {
       try {
         await initApiHostFromStorage();
-        const v = await AsyncStorage.getItem("voice_monitor_enabled");
+        const v = await getStoredItem("voice_monitor_enabled");
         if (v === "true") {
-          const started = startVoiceMonitor((s: string) => {
+          const started = await startVoiceMonitor((s: string) => {
             setVoiceStatus(s);
             setStatus(s.startsWith("triggered") ? "Voice SOS triggered" : s);
           });
@@ -89,7 +89,7 @@ export default function Dashboard({ navigation }: any) {
   useShakeDetector(async () => {
     try {
       // check if user enabled shake SOS
-      const v = await AsyncStorage.getItem("shake_sos_enabled");
+      const v = await getStoredItem("shake_sos_enabled");
       if (v !== "true") return;
       // trigger immediate SOS without confirmation
       sendSosImmediate();
@@ -139,7 +139,7 @@ export default function Dashboard({ navigation }: any) {
         } catch (e) {}
       }
 
-      const offlineModeVal = await AsyncStorage.getItem("offline_sms_mode");
+      const offlineModeVal = await getStoredItem("offline_sms_mode");
       const offlineMode = offlineModeVal === "true";
 
       let smsSent = false;
@@ -315,16 +315,16 @@ export default function Dashboard({ navigation }: any) {
                       setVoiceListening(false);
                       setVoiceStatus("");
                       try {
-                        await AsyncStorage.setItem("voice_monitor_enabled", "false");
+                        await setStoredItem("voice_monitor_enabled", "false");
                       } catch {}
                     } else {
-                      const started = startVoiceMonitor((s: string) => {
+                      const started = await startVoiceMonitor((s: string) => {
                         setVoiceStatus(s);
                         setStatus(s.startsWith("triggered") ? "Voice SOS triggered" : s);
                       });
                       setVoiceListening(Boolean(started));
                       try {
-                        await AsyncStorage.setItem("voice_monitor_enabled", started ? "true" : "false");
+                        await setStoredItem("voice_monitor_enabled", started ? "true" : "false");
                       } catch {}
                       if (!started) setVoiceStatus("unsupported");
                     }

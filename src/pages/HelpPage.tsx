@@ -6,8 +6,8 @@ import {
   ScrollView,
   TouchableOpacity,
 } from "react-native";
-import { PageHeader } from "../components/PageHeader";
-import { theme } from "../theme";
+import { PageHeader } from "../components/PageHeader.js";
+import { theme } from "../theme.js";
 
 export default function HelpPage({ navigation }: any) {
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
@@ -20,7 +20,7 @@ export default function HelpPage({ navigation }: any) {
     id: string;
     icon: string;
     title: string;
-    children: React.ReactNode;
+    children?: React.ReactNode;
   };
 
   const HelpSection = ({ id, icon, title, children }: HelpSectionProps) => {

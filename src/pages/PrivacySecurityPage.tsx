@@ -1,8 +1,8 @@
 import React, { useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Switch, Alert } from "react-native";
-import { PageHeader } from "../components/PageHeader";
-import { theme } from "../theme";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { PageHeader } from "../components/PageHeader.js";
+import { theme } from "../theme.js";
+import { setStoredItem, clearStoredData } from "../services/storage.js";
 
 export default function PrivacySecurityPage({ navigation }: any) {
   const [dataSharing, setDataSharing] = useState(false);
@@ -12,7 +12,7 @@ export default function PrivacySecurityPage({ navigation }: any) {
 
   const handleDataSharingToggle = async (value: boolean) => {
     setDataSharing(value);
-    await AsyncStorage.setItem("data_sharing", value.toString());
+    await setStoredItem("data_sharing", value.toString());
     Alert.alert(
       "Data Sharing",
       value ? "Data sharing enabled" : "Data sharing disabled"
@@ -21,7 +21,7 @@ export default function PrivacySecurityPage({ navigation }: any) {
 
   const handleLocationToggle = async (value: boolean) => {
     setLocationTracking(value);
-    await AsyncStorage.setItem("location_tracking", value.toString());
+    await setStoredItem("location_tracking", value.toString());
     Alert.alert(
       "Location Tracking",
       value
@@ -41,7 +41,7 @@ export default function PrivacySecurityPage({ navigation }: any) {
           style: "destructive",
           onPress: async () => {
             try {
-              await AsyncStorage.clear();
+              await clearStoredData();
               Alert.alert("Success", "All local data has been cleared");
             } catch (error) {
               Alert.alert("Error", "Failed to clear data");
