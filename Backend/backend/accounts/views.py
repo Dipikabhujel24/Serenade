@@ -324,7 +324,67 @@ class BroadcastCommunityAlertView(APIView):
         serializer = CommunityAlertSerializer(data=request.data)
         if serializer.is_valid():
             ca = serializer.save(user=request.user)
-            return Response({"status": "success", "data": CommunityAlertSerializer(ca).data}, status=status.HTTP_201_CREATED)
+
+            # Notify only nearby users (based on recent location samples and selected radius).
+            recipients = []
+            try:
+                from django.utils import timezone
+                from datetime import timedelta
+                from asgiref.sync import async_to_sync
+                from channels.layers import get_channel_layer
+
+                radius_km = float(ca.radius_km or 5.0)
+                deg = radius_km / 111.0
+                since = timezone.now() - timedelta(minutes=30)
+
+                nearby_user_ids = (
+                    account_models.Location.objects.filter(
+                        user__isnull=False,
+                        timestamp__gte=since,
+                        latitude__gte=ca.latitude - deg,
+                        latitude__lte=ca.latitude + deg,
+                        longitude__gte=ca.longitude - deg,
+                        longitude__lte=ca.longitude + deg,
+                    )
+                    .exclude(user=ca.user)
+                    .values_list("user_id", flat=True)
+                    .distinct()
+                )
+
+                channel_layer = get_channel_layer()
+                payload = {
+                    "type": "community_alert",
+                    "id": ca.id,
+                    "alert_type": ca.alert_type,
+                    "message": ca.message,
+                    "latitude": ca.latitude,
+                    "longitude": ca.longitude,
+                    "radius_km": ca.radius_km,
+                    "username": ca.user.username,
+                    "created_at": ca.created_at.isoformat(),
+                }
+
+                for uid in nearby_user_ids:
+                    group = f"user_{uid}"
+                    async_to_sync(channel_layer.group_send)(
+                        group,
+                        {
+                            "type": "community.alert",
+                            "data": payload,
+                        },
+                    )
+                    recipients.append(uid)
+            except Exception as e:
+                logger.exception("Failed to send nearby community alert notifications: %s", e)
+
+            return Response(
+                {
+                    "status": "success",
+                    "data": CommunityAlertSerializer(ca).data,
+                    "notified_users": len(recipients),
+                },
+                status=status.HTTP_201_CREATED,
+            )
         return Response({"status": "error", "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -348,8 +408,9 @@ def nearby_community_alerts(request):
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def nearby_places_proxy(request):
-    """Proxy to Google Places Nearby Search to avoid exposing API key on client
-    Query params: lat, lon, type (hospital|police), radius (meters)
+    """Proxy to OpenStreetMap Overpass API.
+    Query params: lat, lon, type (hospital|police|pharmacy|fire_station), radius (meters)
+    Returns normalized place results compatible with the mobile app.
     """
     try:
         lat = float(request.query_params.get("lat"))
@@ -363,21 +424,48 @@ def nearby_places_proxy(request):
     except Exception:
         radius = 5000
 
-    api_key = os.environ.get("GOOGLE_PLACES_API_KEY")
-    if not api_key:
-        return Response({"status": "error", "error": "Google Places API key not configured on server"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    url = (
-        f"https://maps.googleapis.com/maps/api/place/nearbysearch/json?location={lat},{lon}"
-        f"&radius={radius}&type={place_type}&key={api_key}"
-    )
+    overpass_url = "https://overpass-api.de/api/interpreter"
+    query = f"""
+    [out:json][timeout:25];
+    (
+      node[\"amenity\"=\"{place_type}\"](around:{radius},{lat},{lon});
+      way[\"amenity\"=\"{place_type}\"](around:{radius},{lat},{lon});
+      relation[\"amenity\"=\"{place_type}\"](around:{radius},{lat},{lon});
+    );
+    out center;
+    """
 
     try:
-        r = requests.get(url, timeout=10)
+        r = requests.post(overpass_url, data={"data": query}, timeout=15)
+        r.raise_for_status()
         data = r.json()
-        return Response({"status": "success", "data": data})
+        elements = data.get("elements", []) if isinstance(data, dict) else []
+
+        normalized = []
+        for el in elements:
+            tags = el.get("tags", {}) or {}
+            center = el.get("center", {}) or {}
+            p_lat = el.get("lat", center.get("lat"))
+            p_lon = el.get("lon", center.get("lon"))
+            if p_lat is None or p_lon is None:
+                continue
+
+            normalized.append({
+                "place_id": f"osm-{el.get('type', 'node')}-{el.get('id')}",
+                "name": tags.get("name") or f"{place_type.title()} service",
+                "vicinity": tags.get("addr:street") or tags.get("addr:suburb") or tags.get("addr:city") or "Nearby area",
+                "formatted_address": tags.get("addr:full") or "",
+                "geometry": {
+                    "location": {
+                        "lat": p_lat,
+                        "lng": p_lon,
+                    }
+                },
+            })
+
+        return Response({"status": "success", "data": {"results": normalized}})
     except Exception as e:
-        logger.exception("Failed to fetch places: %s", e)
+        logger.exception("Failed to fetch Overpass places: %s", e)
         return Response({"status": "error", "error": str(e)}, status=status.HTTP_502_BAD_GATEWAY)
 
 
