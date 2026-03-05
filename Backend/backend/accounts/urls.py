@@ -20,6 +20,7 @@ from .views import (
     safety_companion_checkin,
     safety_companion_location_update,
     safety_companion_acknowledge,
+    safety_companion_lookup_user,
     user_profile,
 )
 
@@ -41,6 +42,7 @@ urlpatterns = [
     path('community-alert/<int:alert_id>/report/', report_community_alert),
     path('profile/', user_profile),
     path('safety-companion/', safety_companion_manage),
+    path('safety-companion/lookup-user/', safety_companion_lookup_user),
     path('safety-companion/unassign/', safety_companion_unassign),
     path('safety-companion/checkin/', safety_companion_checkin),
     path('safety-companion/location/', safety_companion_location_update),

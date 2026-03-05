@@ -427,11 +427,35 @@ def safety_companion_manage(request):
     # POST: Create or update safety companion
     data = request.data.copy() if isinstance(request.data, dict) else dict(request.data)
     data["user"] = request.user.id
-    serializer = SafetyCompanionSerializer(data=data)
+    existing = account_models.SafetyCompanion.objects.filter(user=request.user).first()
+    serializer = SafetyCompanionSerializer(existing, data=data, partial=bool(existing))
     if serializer.is_valid():
         sc = serializer.save(user=request.user)
-        return Response({"status": "success", "data": SafetyCompanionSerializer(sc).data}, status=status.HTTP_201_CREATED)
+        return Response(
+            {"status": "success", "data": SafetyCompanionSerializer(sc).data},
+            status=status.HTTP_200_OK if existing else status.HTTP_201_CREATED,
+        )
     return Response({"status": "error", "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def safety_companion_lookup_user(request):
+    username = (request.query_params.get("username") or "").strip()
+    if not username:
+        return Response({"status": "error", "error": "username is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+    from django.contrib.auth.models import User
+
+    try:
+        user = User.objects.get(username=username)
+    except User.DoesNotExist:
+        return Response({"status": "error", "error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    if user.id == request.user.id:
+        return Response({"status": "error", "error": "You cannot select yourself as companion"}, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response({"status": "success", "data": {"id": user.id, "username": user.username}})
 
 
 @api_view(["POST"])
