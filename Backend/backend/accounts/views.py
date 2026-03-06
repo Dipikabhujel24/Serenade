@@ -90,6 +90,96 @@ def user_profile(request):
     return Response({"status": "error", "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
 
 
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def change_password(request):
+    user = request.user
+    current_password = request.data.get("current_password")
+    new_password = request.data.get("new_password")
+
+    if not current_password or not new_password:
+        return Response(
+            {"status": "error", "error": "current_password and new_password are required"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if len(str(new_password)) < 8:
+        return Response(
+            {"status": "error", "error": "new_password must be at least 8 characters"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if not user.check_password(current_password):
+        return Response(
+            {"status": "error", "error": "Current password is incorrect"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    user.set_password(new_password)
+    user.save()
+
+    return Response({"status": "success", "message": "Password updated successfully"})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def export_my_data(request):
+    user = request.user
+    profile = account_models.UserProfile.objects.filter(user=user).first()
+
+    contacts = account_models.EmergencyContact.objects.filter(user=user).order_by("-created_at")
+    alerts = account_models.Alert.objects.filter(user=user).order_by("-created_at")[:100]
+    locations = account_models.Location.objects.filter(user=user).order_by("-timestamp")[:100]
+
+    payload = {
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+        },
+        "profile": {
+            "phone": profile.phone if profile else "",
+            "avatar": profile.avatar.url if profile and getattr(profile, "avatar") else None,
+        },
+        "contacts": EmergencyContactSerializer(contacts, many=True).data,
+        "alerts": AlertSerializer(alerts, many=True).data,
+        "locations": LocationSerializer(locations, many=True).data,
+    }
+
+    return Response({"status": "success", "data": payload})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def delete_account(request):
+    user = request.user
+    password = request.data.get("password")
+    confirm = request.data.get("confirm")
+
+    if confirm != "DELETE":
+        return Response(
+            {"status": "error", "error": "Confirmation token invalid"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if not password:
+        return Response(
+            {"status": "error", "error": "Password is required"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if not user.check_password(password):
+        return Response(
+            {"status": "error", "error": "Invalid password"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    user.delete()
+    return Response({"status": "success", "message": "Account deleted"})
+
+
 @csrf_exempt
 @api_view(["POST"])
 @permission_classes([])
@@ -543,7 +633,18 @@ def safety_companion_lookup_user(request):
     if user.id == request.user.id:
         return Response({"status": "error", "error": "You cannot select yourself as companion"}, status=status.HTTP_400_BAD_REQUEST)
 
-    return Response({"status": "success", "data": {"id": user.id, "username": user.username}})
+    profile = account_models.UserProfile.objects.filter(user=user).first()
+    return Response({
+        "status": "success",
+        "data": {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "phone": profile.phone if profile else "",
+        },
+    })
 
 
 @api_view(["POST"])

@@ -22,6 +22,9 @@ from .views import (
     safety_companion_acknowledge,
     safety_companion_lookup_user,
     user_profile,
+    change_password,
+    export_my_data,
+    delete_account,
 )
 
 urlpatterns = [
@@ -41,6 +44,9 @@ urlpatterns = [
     path('community-alert/nearby/', nearby_community_alerts),
     path('community-alert/<int:alert_id>/report/', report_community_alert),
     path('profile/', user_profile),
+    path('profile/change-password/', change_password),
+    path('profile/export/', export_my_data),
+    path('profile/delete/', delete_account),
     path('safety-companion/', safety_companion_manage),
     path('safety-companion/lookup-user/', safety_companion_lookup_user),
     path('safety-companion/unassign/', safety_companion_unassign),

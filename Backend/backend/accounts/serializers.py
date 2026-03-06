@@ -204,11 +204,26 @@ class CommunityAlertSerializer(serializers.ModelSerializer):
 
 class SafetyCompanionSerializer(serializers.ModelSerializer):
     companion_name = serializers.CharField(source='companion.username', read_only=True)
+    companion_email = serializers.CharField(source='companion.email', read_only=True)
+    companion_first_name = serializers.CharField(source='companion.first_name', read_only=True)
+    companion_last_name = serializers.CharField(source='companion.last_name', read_only=True)
+    companion_phone = serializers.SerializerMethodField()
     user_name = serializers.CharField(source='user.username', read_only=True)
+
+    def get_companion_phone(self, obj):
+        try:
+            companion = getattr(obj, 'companion', None)
+            if not companion:
+                return ""
+            profile = getattr(companion, 'profile', None)
+            return getattr(profile, 'phone', '') if profile else ''
+        except Exception:
+            return ""
     
     class Meta:
         model = SafetyCompanion
         fields = ['id', 'user', 'user_name', 'companion', 'companion_name', 'is_active', 
+                  'companion_email', 'companion_first_name', 'companion_last_name', 'companion_phone',
                   'check_in_interval_minutes', 'deviation_threshold_km', 'notification_enabled',
                   'last_location_latitude', 'last_location_longitude', 'last_location_update',
                   'last_check_in', 'companion_acknowledged', 'deviation_alert_sent',
