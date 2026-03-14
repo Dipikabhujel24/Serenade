@@ -15,9 +15,13 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.anonymous.serenade",
+      "config": {
+        "usesNonExemptEncryption": false
+      },
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Serenade needs microphone access for voice-activated SOS.",
-        "NSSpeechRecognitionUsageDescription": "Serenade uses speech recognition to trigger SOS when you say Help Me."
+        "NSSpeechRecognitionUsageDescription": "Serenade uses speech recognition to trigger SOS when you say Help Me.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -30,8 +34,7 @@
         "RECORD_AUDIO"
       ],
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.serenade"
+      "predictiveBackGestureEnabled": false
     },
     "web": {
       "favicon": "./assets/images/Logo.png"
@@ -41,6 +44,9 @@
         "projectId": "cfe40944-7115-445e-827e-53aad7cbdbd2"
       }
     },
-    "owner": "dipika05"
+    "owner": "dipika05",
+    "plugins": [
+      "expo-web-browser"
+    ]
   }
 }

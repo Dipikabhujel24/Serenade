@@ -1,4 +1,4 @@
-package com.serenade
+package com.anonymous.serenade
 
 import android.os.Build
 import android.os.Bundle

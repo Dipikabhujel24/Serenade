@@ -190,15 +190,38 @@ class SMSQueueSerializer(serializers.ModelSerializer):
 
 class CommunityAlertSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source='user.username', read_only=True)
+    audio_evidence_url = serializers.SerializerMethodField(read_only=True)
+    video_evidence_url = serializers.SerializerMethodField(read_only=True)
 
     latitude = serializers.FloatField(required=True)
     longitude = serializers.FloatField(required=True)
     message = serializers.CharField(required=True)
+    audio_evidence = serializers.FileField(required=False, allow_null=True)
+    video_evidence = serializers.FileField(required=False, allow_null=True)
+
+    def get_audio_evidence_url(self, obj):
+        file = getattr(obj, 'audio_evidence', None)
+        if not file:
+            return None
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(file.url)
+        return file.url
+
+    def get_video_evidence_url(self, obj):
+        file = getattr(obj, 'video_evidence', None)
+        if not file:
+            return None
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(file.url)
+        return file.url
 
     class Meta:
         model = models.CommunityAlert
         fields = ['id','user','username','alert_type','message','latitude','longitude',
-                  'radius_km','is_active','created_at','expires_at','views_count','reports_count']
+                  'radius_km','audio_evidence','video_evidence','audio_evidence_url','video_evidence_url',
+                  'is_active','created_at','expires_at','views_count','reports_count']
         read_only_fields = ['id','created_at','views_count','reports_count','user']
 
 

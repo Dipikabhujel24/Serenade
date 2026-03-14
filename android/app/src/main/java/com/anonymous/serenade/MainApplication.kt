@@ -1,4 +1,4 @@
-package com.serenade
+package com.anonymous.serenade
 
 import android.app.Application
 import android.content.res.Configuration

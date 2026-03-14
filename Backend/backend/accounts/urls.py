@@ -3,6 +3,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from .views import (
     SignupView,
     LoginView,
+    google_login,
     sos_alert,
     EmergencyContactListCreateView,
     EmergencyContactDetailView,
@@ -30,6 +31,7 @@ from .views import (
 urlpatterns = [
     path('signup/', SignupView.as_view()),
     path('login/', LoginView.as_view()),
+    path('google-login/', google_login),
     path('token/refresh/', TokenRefreshView.as_view()),
     path('sos/', sos_alert),
     path('contacts/', EmergencyContactListCreateView.as_view()),

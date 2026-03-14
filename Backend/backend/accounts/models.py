@@ -137,6 +137,8 @@ class CommunityAlert(models.Model):
     latitude = models.FloatField()
     longitude = models.FloatField()
     radius_km = models.FloatField(default=1.0)  # Alert broadcast radius in km
+    audio_evidence = models.FileField(upload_to='community_alerts/audio/', null=True, blank=True)
+    video_evidence = models.FileField(upload_to='community_alerts/video/', null=True, blank=True)
     
     # Status tracking
     is_active = models.BooleanField(default=True)

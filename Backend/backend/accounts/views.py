@@ -27,6 +27,65 @@ from django.contrib.auth.models import AnonymousUser
 from . import models as account_models
 
 
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def google_login(request):
+    """Verify a Google OAuth access token, get-or-create a Django user, return JWT tokens."""
+    from django.contrib.auth.models import User as DjangoUser
+
+    token = request.data.get('token')
+    if not token:
+        return Response({'error': 'Token required'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        resp = requests.get(
+            'https://www.googleapis.com/oauth2/v3/userinfo',
+            headers={'Authorization': f'Bearer {token}'},
+            timeout=10,
+        )
+    except Exception as exc:
+        logger.warning('Google userinfo request failed: %s', exc)
+        return Response({'error': 'Could not reach Google servers'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    if not resp.ok:
+        return Response({'error': 'Invalid Google token'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    info = resp.json()
+    email = info.get('email')
+    if not email:
+        return Response({'error': 'No email in Google profile'}, status=status.HTTP_400_BAD_REQUEST)
+
+    user = DjangoUser.objects.filter(email=email).first()
+    if not user:
+        base_username = email.split('@')[0]
+        username = base_username
+        counter = 1
+        while DjangoUser.objects.filter(username=username).exists():
+            username = f'{base_username}{counter}'
+            counter += 1
+        user = DjangoUser.objects.create_user(
+            username=username,
+            email=email,
+            first_name=info.get('given_name', ''),
+            last_name=info.get('family_name', ''),
+        )
+        user.set_unusable_password()
+        user.save()
+
+    account_models.UserProfile.objects.get_or_create(user=user)
+    refresh = RefreshToken.for_user(user)
+    profile = account_models.UserProfile.objects.filter(user=user).first()
+    return Response({
+        'access': str(refresh.access_token),
+        'refresh': str(refresh),
+        'username': user.username,
+        'email': user.email,
+        'first_name': user.first_name,
+        'last_name': user.last_name,
+        'phone': profile.phone if profile else '',
+    })
+
+
 @method_decorator(csrf_exempt, name='dispatch')
 class SignupView(APIView):
     def post(self, request):
@@ -411,7 +470,7 @@ class BroadcastCommunityAlertView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        serializer = CommunityAlertSerializer(data=request.data)
+        serializer = CommunityAlertSerializer(data=request.data, context={"request": request})
         if serializer.is_valid():
             ca = serializer.save(user=request.user)
 
@@ -470,7 +529,7 @@ class BroadcastCommunityAlertView(APIView):
             return Response(
                 {
                     "status": "success",
-                    "data": CommunityAlertSerializer(ca).data,
+                    "data": CommunityAlertSerializer(ca, context={"request": request}).data,
                     "notified_users": len(recipients),
                 },
                 status=status.HTTP_201_CREATED,
@@ -491,8 +550,41 @@ def nearby_community_alerts(request):
     # simple bounding box approximation (~111 km per degree)
     deg = radius_km / 111.0
     qs = account_models.CommunityAlert.objects.filter(latitude__gte=lat - deg, latitude__lte=lat + deg, longitude__gte=lon - deg, longitude__lte=lon + deg, is_active=True)
-    serializer = CommunityAlertSerializer(qs, many=True)
+    serializer = CommunityAlertSerializer(qs, many=True, context={"request": request})
     return Response({"status": "success", "data": serializer.data})
+
+
+import time as _time
+_places_cache: dict = {}  # key -> (timestamp, results)
+_PLACES_CACHE_TTL = 60  # seconds
+
+_OVERPASS_MIRRORS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
+]
+
+
+def _fetch_overpass(query: str) -> list:
+    """Try each Overpass mirror in order; retry once on 429 with a short backoff."""
+    last_err = None
+    for mirror_url in _OVERPASS_MIRRORS:
+        for attempt in range(2):
+            try:
+                r = requests.post(mirror_url, data={"data": query}, timeout=25)
+                if r.status_code == 429:
+                    wait = 2 ** attempt
+                    logger.warning("Overpass 429 on %s, waiting %ss", mirror_url, wait)
+                    _time.sleep(wait)
+                    continue
+                r.raise_for_status()
+                data = r.json()
+                return data.get("elements", []) if isinstance(data, dict) else []
+            except Exception as exc:
+                last_err = exc
+                logger.warning("Overpass error on %s attempt %s: %s", mirror_url, attempt + 1, exc)
+                break  # try next mirror
+    raise last_err or Exception("All Overpass mirrors failed")
 
 
 @api_view(["GET"])
@@ -514,7 +606,12 @@ def nearby_places_proxy(request):
     except Exception:
         radius = 5000
 
-    overpass_url = "https://overpass-api.de/api/interpreter"
+    # Round coordinates to 3 decimal places (~110 m) for cache key
+    cache_key = f"{round(lat, 3)},{round(lon, 3)},{place_type},{radius}"
+    cached = _places_cache.get(cache_key)
+    if cached and (_time.time() - cached[0]) < _PLACES_CACHE_TTL:
+        return Response({"status": "success", "data": {"results": cached[1]}})
+
     query = f"""
     [out:json][timeout:25];
     (
@@ -526,10 +623,7 @@ def nearby_places_proxy(request):
     """
 
     try:
-        r = requests.post(overpass_url, data={"data": query}, timeout=15)
-        r.raise_for_status()
-        data = r.json()
-        elements = data.get("elements", []) if isinstance(data, dict) else []
+        elements = _fetch_overpass(query)
 
         normalized = []
         for el in elements:
@@ -553,6 +647,7 @@ def nearby_places_proxy(request):
                 },
             })
 
+        _places_cache[cache_key] = (_time.time(), normalized)
         return Response({"status": "success", "data": {"results": normalized}})
     except Exception as e:
         logger.exception("Failed to fetch Overpass places: %s", e)
